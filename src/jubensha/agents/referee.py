@@ -27,7 +27,7 @@ def profile_for(script: Script) -> GenreProfile:
     )
 
 
-def _tokens(text: str) -> set[str]:
+def text_terms(text: str) -> set[str]:
     words = set(re.findall(r"[a-zA-Z0-9]+", text.lower()))
     for phrase in re.findall(r"[\u4e00-\u9fff]+", text):
         words.update(phrase[index:index + 2] for index in range(len(phrase) - 1))
@@ -46,12 +46,18 @@ def judge_submission(script: Script, state: GameState,
                       if culprits.intersection(event.actor_ids)}
     culprit_secrets = {key for key, secret in script.secrets.items()
                        if secret.owner_role_id in culprits}
-    motive_terms = _tokens(" ".join(
+    motive_terms = text_terms(" ".join(
         goal for role_id in culprits for goal in script.characters[role_id].private_goals))
-    player_terms = _tokens(state.vote_motive)
+    player_terms = text_terms(state.vote_motive)
+    public_terms = text_terms(" ".join(
+        [act.public_narrative for act in script.acts]
+        + [character.public_profile for character in script.characters.values()]))
+    evidence_terms = text_terms(" ".join(script.clues[key].surface_text for key in evidence
+                                      if key in owned and key in script.clues))
+    motive_evidence = (motive_terms - public_terms).intersection(evidence_terms)
     outcomes = {
         "culprit": state.vote_role_id in culprits,
-        "motive": bool(player_terms.intersection(motive_terms)),
+        "motive": bool(player_terms.intersection(motive_evidence)),
         "key_evidence": any(
             clue_id in owned and clue_id in script.clues
             and (set(script.clues[clue_id].reveals_event_ids).intersection(culprit_events)

@@ -12,11 +12,62 @@ def lint_script(script: Script) -> LinterReport:
 
     acts = {act.act_id for act in script.acts}
     event_ids = {event.event_id for event in script.truth_events}
+    if not script.acts or len(acts) != len(script.acts) or len({act.order for act in script.acts}) != len(script.acts):
+        issue("INVALID_ACT_ORDER", "blocker", script.script_id, "幕缺失或幕编号/顺序重复")
+    if not script.characters or script.seat_range[0] < 1 or script.seat_range[0] > script.seat_range[1]:
+        issue("INVALID_CAST", "blocker", script.script_id, "角色或席位范围无效")
+    for key, character in script.characters.items():
+        if character.role_id != key or key not in script.knowledge:
+            issue("BROKEN_CHARACTER_REFERENCE", "blocker", key, "角色键与 role_id 不符，或缺少认知切片")
+        for secret_id in character.secret_ids:
+            if secret_id not in script.secrets or script.secrets[secret_id].owner_role_id != key:
+                issue("BROKEN_SECRET_OWNER", "blocker", key, f"秘密 {secret_id} 归属不一致")
+    for key, knowledge in script.knowledge.items():
+        if key not in script.characters or knowledge.role_id != key:
+            issue("BROKEN_KNOWLEDGE_REFERENCE", "blocker", key, "认知切片与角色不匹配")
+        for event_id in knowledge.knows_event_ids:
+            if event_id not in event_ids:
+                issue("BROKEN_KNOWLEDGE_REFERENCE", "blocker", key, f"未知事件 {event_id}")
+        for clue_id in knowledge.knows_clue_ids:
+            if clue_id not in script.clues:
+                issue("BROKEN_KNOWLEDGE_REFERENCE", "blocker", key, f"未知线索 {clue_id}")
+        for belief in knowledge.false_beliefs:
+            if belief.source_event_id not in event_ids or any(
+                clue_id not in script.clues for clue_id in belief.refuted_by_clue_ids):
+                issue("BROKEN_BELIEF_REFERENCE", "blocker", key, "误信来源或反证线索不存在")
+    for key, secret in script.secrets.items():
+        if key != secret.secret_id or secret.owner_role_id not in script.characters:
+            issue("BROKEN_SECRET_OWNER", "blocker", key, "秘密 ID 或归属角色无效")
+        for clue_id in secret.exposed_by_clue_ids:
+            if clue_id not in script.clues:
+                issue("BROKEN_SECRET_REFERENCE", "blocker", key, f"暴露线索 {clue_id} 不存在")
+    if set(script.leak_surfaces) != set(script.secrets):
+        issue("BROKEN_LEAK_SURFACE", "blocker", script.script_id, "泄密表与秘密 ID 不一致")
+    for key, surface in script.leak_surfaces.items():
+        if surface.secret_id != key:
+            issue("BROKEN_LEAK_SURFACE", "blocker", key, "泄密表 secret_id 不匹配")
+    for key, location in script.locations.items():
+        if key != location.location_id or location.capacity_per_act < 0:
+            issue("BROKEN_LOCATION_REFERENCE", "blocker", key, "地点 ID 或容量无效")
+        for neighbor in location.connected_to:
+            if neighbor not in script.locations:
+                issue("BROKEN_LOCATION_REFERENCE", "blocker", key, f"相邻地点 {neighbor} 不存在")
+    for relationship in script.relationships:
+        if relationship.from_role not in script.characters and relationship.to_role not in script.characters:
+            issue("BROKEN_RELATIONSHIP", "blocker", relationship.from_role,
+                  "关系两端均不是可对话角色")
+        for clue_id in relationship.evidence_clue_ids:
+            if clue_id not in script.clues:
+                issue("BROKEN_RELATIONSHIP", "blocker", relationship.from_role,
+                      f"关系证据 {clue_id} 不存在")
     for event in script.truth_events:
         if event.act_id not in acts or event.location_id not in script.locations:
             issue("BROKEN_EVENT_REFERENCE", "blocker", event.event_id, "事件引用了不存在的幕或地点")
         if event.t_end is not None and event.t_end < event.t_start:
             issue("INVALID_TIME_RANGE", "blocker", event.event_id, "事件结束时间早于开始时间")
+        if abs(event.t_start) > 10080 or (event.t_end is not None and abs(event.t_end) > 10080):
+            issue("UNUSUAL_TIME_OFFSET", "high", event.event_id,
+                  "相对分钟数超过一周，需核对是否把原文字符位置误解析为时间")
         for clue_id in event.evidence_clue_ids:
             if clue_id not in script.clues:
                 issue("BROKEN_CLUE_REFERENCE", "blocker", event.event_id, f"缺少线索 {clue_id}")
@@ -44,6 +95,8 @@ def lint_script(script: Script) -> LinterReport:
                 del pending[clue_id]
                 changed = True
     for clue_id, clue in script.clues.items():
+        if clue.clue_id != clue_id or clue.search_cost < 1:
+            issue("INVALID_CLUE", "blocker", clue_id, "线索 ID 或搜证成本无效")
         if clue.location_id not in script.locations:
             issue("BROKEN_LOCATION_REFERENCE", "blocker", clue_id, "线索地点不存在")
         if not clue.reveals_event_ids and not clue.reveals_secret_ids:
@@ -69,6 +122,16 @@ def lint_script(script: Script) -> LinterReport:
                 or any(script.secrets[secret_id].owner_role_id in culprits
                        for secret_id in script.clues[clue_id].reveals_secret_ids
                        if secret_id in script.secrets)]
+    relevant_clues = set(evidence)
+    for clue_id in list(relevant_clues):
+        relevant_clues.update(key for key in script.clues[clue_id].prerequisites
+                              if key in script.clues)
+    chain_cost = sum(script.clues[key].search_cost for key in relevant_clues)
+    total_budget = sum(act.search_points_budget for act in script.acts)
+    if chain_cost > total_budget:
+        issue("KEY_CHAIN_RESOURCE_RISK", "medium", script.script_id,
+              f"完整相关证据链需 {chain_cost} 点，剧本总预算仅 {total_budget} 点；请人工确认可用子路径是否足够",
+              "增加预算、减少必需线索成本，或确认较短推理路径")
     solvable = bool(culprits and evidence)
     if not solvable:
         issue("MISSING_KEY_EVIDENCE", "blocker", script.script_id,

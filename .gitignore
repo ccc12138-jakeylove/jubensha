@@ -2,5 +2,7 @@
 .env
 *.db
 eval_report.md
+judge_review.csv
+probe_review.csv
 __pycache__/
 .pytest_cache/

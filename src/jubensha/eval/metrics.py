@@ -6,9 +6,11 @@ class EvalMetrics(BaseModel):
     games: int
     completed: int
     win_rate: float
+    normal_win_rate: float = 0
     culprit_rate: float = 0
     stuck_rate: float
     leak_rate: float | None
+    raw_risk_rate: float | None = None
     mean_turns: float
     invariant_failures: int
     model_evaluated: bool

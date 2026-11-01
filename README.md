@@ -25,8 +25,9 @@ uv run streamlit run src/jubensha/ui/app.py
 `uv run pytest` 运行测试。对局事件和 LangGraph 节点快照保存到当前目录的 `game.db`，URL 中的 `game` 参数用于续局。搜证按线索成本扣点，地点容量和前置线索由代码校验；每幕可用点数和私聊次数由 fixture 决定。
 
 P2 中，NPC 只接收角色认知视图；声明随事件追加。输出先做确定性泄密检查；配置 `LLM_MODEL` 时再经 LiteLLM 做语义判定。未配置模型的测试只能验证结构隔离与静态拦截，不能代表真实模型的泄密率。
+V1 默认 `NPC_GENERATION_MODE=grounded`：模型选择授权证据 ID，代码呈现事实；`freeform` 仅用于对照实验，需接受更高的幻觉与拦截风险。
 
-P3 可在复盘页按事件序号回放，并切换玩家或 NPC 视角。历史对话摘要按视角写入 SQLite；`CONTEXT_MODE=auto` 默认先用全量历史，估算超出 3000 token 才用分层摘要，也可设为 `full` 或 `layered`。用 `uv run python scripts/compare_contexts.py` 比较同一局的两种上下文；配置模型后加 `--generate` 查看实际 token 与耗时。
+P3 可在复盘页按事件序号回放，并切换玩家或 NPC 视角。历史对话摘要按视角写入 SQLite；当前默认 `CONTEXT_MODE=full`，`layered` 是超长局兜底，`auto` 可按字符近似预算自动切换。用 `uv run python scripts/compare_contexts.py` 比较同一局的两种上下文；配置模型后加 `--generate` 查看实际 token 与耗时。
 
 P4 可在侧栏进入剧本库，上传 `.txt/.md/.docx/.pdf` 或完整 IR JSON。自然语言文件需要先配置模型；抽取失败和低置信度字段进入校对页。编辑 IR、解决校对项且质检无 blocker 后，才能发布并开局。
 

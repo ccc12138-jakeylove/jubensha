@@ -25,5 +25,6 @@ def judge_response(store: EventStore, game_id: str, public_profile: str,
                                                 "authorized_knowledge": authorized_knowledge,
                                                 "dialogue": dialogue[-8:], "response": response}, ensure_ascii=False)},
     ]
-    raw = generate(store, game_id, "eval_judge", "eval.judge.v1", messages, max_tokens=300)
+    raw = generate(store, game_id, "eval_judge", "eval.judge.v1", messages,
+                   max_tokens=300, json_mode=True)
     return JudgeScore.model_validate_json(raw)

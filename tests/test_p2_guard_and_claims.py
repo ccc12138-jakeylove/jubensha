@@ -10,6 +10,7 @@ from jubensha.engine.perception import build_perception
 from jubensha.engine.probes import generate_probes
 from jubensha.schema.events import EventType
 from jubensha.storage.events import EventStore
+from jubensha.schema.claims import NpcResponse
 
 
 def test_guard_blocks_surface_variants_and_unauthorized_ids(script, state):
@@ -20,6 +21,10 @@ def test_guard_blocks_surface_variants_and_unauthorized_ids(script, state):
     assert not check_npc_output(script, perception, "我看见了 C09")
     assert not check_npc_output(script, perception, "林素云调快了怀表")
     assert check_npc_output(script, perception, "我只看到门闩完好。")
+    assert not check_npc_output(script, perception, "怀表停在二十三点五十五分。")
+    assert check_npc_output(script, perception, "怀表停在 22:55。")
+    culprit = build_perception(script, state, "lin_suyun")
+    assert not check_npc_output(script, culprit, "我藏起了欠条。", "案发时你在哪？")
 
 
 def test_five_followups_reuse_lie_claim(script, tmp_path, monkeypatch):
@@ -29,9 +34,11 @@ def test_five_followups_reuse_lie_claim(script, tmp_path, monkeypatch):
     graph = build_turn_graph(script, store)
     for action in ("begin", "read_done"):
         run_turn(graph, store, script, {"game_id": "g", "action": action})
-    for _ in range(5):
+    questions = ["员工通道谁能进？", "员工通道钥匙在谁手里？", "谁能打开员工通道？",
+                 "员工通道是谁开的？", "员工通道谁能进？"]
+    for question in questions:
         run_turn(graph, store, script, {"game_id": "g", "action": "talk",
-                                             "role_id": "lin_suyun", "text": "员工通道谁能进？"})
+                                             "role_id": "lin_suyun", "text": question})
     claims = [event for event in store.events("g")
               if event.type == EventType.CLAIM and event.payload.get("role_id") == "lin_suyun"]
     assert len(claims) == 5
@@ -56,7 +63,7 @@ def test_generated_probe_matrix_is_safe_without_model(script, state, tmp_path, m
     hits = 0
     for probe in probes:
         perception = build_perception(script, state, probe.role_id)
-        reply, _ = respond(perception, probe.prompt, [], store, state.game_id)
+        reply = respond(perception, probe.prompt, [], store, state.game_id).text
         hits += not check_npc_output(script, perception, reply)
     assert hits == 0
 
@@ -89,7 +96,7 @@ def test_leaking_output_is_not_persisted(script, tmp_path, monkeypatch):
     calls = []
     def bad_reply(*args, **kwargs):
         calls.append(1)
-        return secret, False
+        return NpcResponse(text=secret)
     monkeypatch.setattr("jubensha.engine.loop.respond", bad_reply)
     result = run_turn(graph, store, script, {"game_id": "g", "action": "talk",
                                                "role_id": "chen_yanqiu", "text": "怀表呢？"})
@@ -97,6 +104,7 @@ def test_leaking_output_is_not_persisted(script, tmp_path, monkeypatch):
     assert len(calls) >= 3
     persisted = [e.payload for e in store.events("g") if e.type in (EventType.NPC_SPEECH, EventType.CLAIM)]
     assert all(secret not in str(payload) for payload in persisted)
+    assert any(item["candidate"] == secret for item in store.guard_cases("g"))
 
 
 def test_injection_does_not_reach_npc(script, tmp_path, monkeypatch):

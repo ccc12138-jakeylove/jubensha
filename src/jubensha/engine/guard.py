@@ -12,6 +12,37 @@ def _plain(text: str) -> str:
     return "".join(re.findall(r"[\w\u4e00-\u9fff]+", text.lower()))
 
 
+def _chinese_number(value: str) -> int | None:
+    digits = {"零": 0, "〇": 0, "一": 1, "二": 2, "两": 2, "三": 3, "四": 4,
+              "五": 5, "六": 6, "七": 7, "八": 8, "九": 9}
+    if value == "十":
+        return 10
+    if "十" in value:
+        left, right = value.split("十", 1)
+        if left and left not in digits or right and right not in digits:
+            return None
+        return (digits[left] if left else 1) * 10 + (digits[right] if right else 0)
+    if all(char in digits for char in value):
+        number = 0
+        for char in value:
+            number = number * 10 + digits[char]
+        return number
+    return None
+
+
+def _times(text: str) -> set[tuple[int, int]]:
+    result = {(int(hour), int(minute)) for hour, minute in
+              re.findall(r"(?<!\d)(\d{1,2}):(\d{2})(?!\d)", text)}
+    for hour_text, minute_text in re.findall(
+        r"([零〇一二两三四五六七八九十]{1,3})点([零〇一二两三四五六七八九十]{1,3})分", text):
+        hour, minute = _chinese_number(hour_text), _chinese_number(minute_text)
+        if hour is not None and minute is not None and hour < 24 and minute < 60:
+            result.add((hour, minute))
+            if hour < 12 and any(word in text for word in ("夜", "晚")):
+                result.add((hour + 12, minute))
+    return result
+
+
 def blocked_input(text: str) -> bool:
     normalized = _plain(text)
     return any(term in normalized for term in (
@@ -39,12 +70,24 @@ def _similar(phrase: str, response: str) -> bool:
     return False
 
 
-def check_npc_output(script: Script, perception: PerceptionView, response: str) -> bool:
+def check_npc_output(script: Script, perception: PerceptionView, response: str,
+                     question: str = "") -> bool:
     allowed_events = {item["event_id"] for item in perception.known_events}
     allowed_clues = {item["clue_id"] for item in perception.known_clues}
     for identifier in re.findall(r"\b(?:E|C|S)\d{2,}\b", response):
         if identifier.startswith("S") or identifier not in allowed_events | allowed_clues:
             return False
+    if any(topic in response and topic not in question for topic in perception.forbidden_topics):
+        return False
+    allowed_text = json.dumps({
+        "public": perception.public_summary,
+        "events": perception.known_events,
+        "clues": perception.known_clues,
+        "beliefs": perception.false_beliefs,
+        "lie_cues": perception.lie_cues,
+    }, ensure_ascii=False)
+    if not _times(response).issubset(_times(allowed_text)):
+        return False
     for secret in script.secrets.values():
         if any(all(_plain(part) in _plain(response) for part in triple)
                for triple in secret.forbidden_claims):

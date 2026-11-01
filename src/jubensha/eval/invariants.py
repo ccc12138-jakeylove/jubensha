@@ -12,8 +12,19 @@ def check_invariants(script: Script, events: list[GameEvent]) -> list[str]:
     phase = Phase.ENTRY
     points = act_by_id[act_id].search_points_budget
     acquired: set[str] = set()
+    public_clues: set[str] = set()
     location_counts: dict[str, int] = {}
     for event in events:
+        if event.type in (EventType.NPC_SPEECH, EventType.CLAIM):
+            role_id = event.payload.get("role_id")
+            knowledge = script.knowledge.get(role_id)
+            citations = event.payload.get("evidence_ids", [])
+            if knowledge is None:
+                failures.append(f"unknown NPC role at seq {event.seq}")
+            elif any(reference not in
+                     (set(knowledge.knows_event_ids) | set(knowledge.knows_clue_ids) | public_clues)
+                     for reference in citations):
+                failures.append(f"unauthorized NPC citation at seq {event.seq}")
         if event.type == EventType.PHASE_CHANGE:
             target = Phase(event.payload["to"])
             try:
@@ -46,4 +57,6 @@ def check_invariants(script: Script, events: list[GameEvent]) -> list[str]:
             if location_counts[clue.location_id] > script.locations[clue.location_id].capacity_per_act:
                 failures.append(f"location capacity exceeded for {clue.location_id}")
             acquired.add(clue_id)
+            if "*" in event.visible_to:
+                public_clues.add(clue_id)
     return failures

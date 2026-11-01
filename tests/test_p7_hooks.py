@@ -89,6 +89,8 @@ def test_accusation_rubric_uses_acquired_evidence(script, state):
     assert not judge_submission(script, state).outcomes["key_evidence"]
     state.seats["seat_1"].private_clue_ids.append("C04")
     assert judge_submission(script, state).passed
+    state.vote_motive = "只是为了掩盖投毒手法"
+    assert not judge_submission(script, state).outcomes["motive"]
 
 
 def test_memory_store_hook_accepts_alternate_backend(script, state):

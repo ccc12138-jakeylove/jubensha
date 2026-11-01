@@ -8,6 +8,7 @@ from langgraph.graph import END, START, StateGraph
 
 from jubensha.agents.dm import narrate
 from jubensha.agents.npc import respond
+from jubensha.agents.fallback import safe_response_with_source
 from jubensha.agents.director import decide
 from jubensha.engine.fsm import Phase, transition
 from jubensha.engine.claims import normalize_probe
@@ -97,7 +98,7 @@ def build_turn_graph(script: Script, store: EventStore):
         data["reply"] = "你说的这些我听不懂。还是谈谈那晚发生的事吧。"
         data["npc_outputs"] = [{"role_id": data.get("role_id") or next(iter(script.characters)),
                                 "reply": data["reply"], "is_lie": False,
-                                "question": data["text"], "proactive": False}]
+                                "evidence_ids": [], "question": data["text"], "proactive": False}]
         return data
 
     def npc_dispatch(data: TurnState) -> TurnState:
@@ -125,8 +126,9 @@ def build_turn_graph(script: Script, store: EventStore):
         history = store.events(data["game_id"])
         def answer(role_id: str) -> dict:
             perception = build_perception(script, state, role_id)
-            reply, is_lie = respond(perception, question, history, store, state.game_id)
-            return {"role_id": role_id, "reply": reply, "is_lie": is_lie,
+            response = respond(perception, question, history, store, state.game_id)
+            return {"role_id": role_id, "reply": response.text,
+                    "is_lie": response.is_lie, "evidence_ids": response.evidence_ids,
                     "question": question, "proactive": False}
         if len(roles) > 1:
             with ThreadPoolExecutor(max_workers=2) as executor:
@@ -162,20 +164,34 @@ def build_turn_graph(script: Script, store: EventStore):
             state = store.load(data["game_id"], script.acts[0].search_points_budget)
             for output in data["npc_outputs"]:
                 perception = build_perception(script, state, output["role_id"])
-                def output_allowed():
-                    return (check_npc_output(script, perception, output["reply"])
-                            and semantic_leak_check(script, output["reply"], store, state.game_id))
-                allowed = output_allowed()
+                def check_output():
+                    if not check_npc_output(script, perception, output["reply"], output["question"]):
+                        return "structure"
+                    if not semantic_leak_check(script, output["reply"], store, state.game_id):
+                        return "semantic"
+                    return None
+                reason = check_output()
                 for _ in range(2):
-                    if allowed:
+                    if reason is None:
                         break
                     data["leak_blocked"] = True
-                    output["reply"], output["is_lie"] = respond(
+                    store.guard_case(state.game_id, output["role_id"], output["question"],
+                                     output["reply"], reason)
+                    replacement = respond(
                         perception, output["question"], store.events(data["game_id"]),
                         store, state.game_id, retry=True)
-                    allowed = output_allowed()
-                if not allowed:
-                    output["reply"] = "这事我不清楚。"
+                    output.update(reply=replacement.text, is_lie=replacement.is_lie,
+                                  evidence_ids=replacement.evidence_ids)
+                    reason = check_output()
+                if reason is not None:
+                    data["leak_blocked"] = True
+                    store.guard_case(state.game_id, output["role_id"], output["question"],
+                                     output["reply"], reason)
+                    output["reply"], output["evidence_ids"] = safe_response_with_source(
+                        perception, output["question"])
+                    if not check_npc_output(script, perception, output["reply"], output["question"]):
+                        output["reply"] = "这件事我没亲眼看见，不敢乱说。"
+                        output["evidence_ids"] = []
                     output["is_lie"] = False
             data["reply"] = "\n".join(item["reply"] for item in data["npc_outputs"])
             data["npc_is_lie"] = any(item["is_lie"] for item in data["npc_outputs"])
@@ -205,12 +221,19 @@ def build_turn_graph(script: Script, store: EventStore):
                 perception = build_perception(script, state, role_id)
                 question = (f"玩家刚找到这条线索：{script.clues[decision.trigger_clue_id].surface_text}。你怎么看？"
                             if decision.trigger_clue_id else "你对刚才的话怎么看？")
-                reply, is_lie = respond(perception, question, history, store, state.game_id)
-                if not check_npc_output(script, perception, reply) or not semantic_leak_check(script, reply, store, state.game_id):
-                    reply, is_lie = "这事我还想再看看。", False
+                response = respond(perception, question, history, store, state.game_id)
+                reply, is_lie = response.text, response.is_lie
+                evidence_ids = response.evidence_ids
+                if not check_npc_output(script, perception, reply, question) or not semantic_leak_check(script, reply, store, state.game_id):
+                    store.guard_case(state.game_id, role_id, question, reply, "proactive")
+                    reply, evidence_ids = safe_response_with_source(perception, question)
+                    is_lie = False
+                    if not check_npc_output(script, perception, reply, question):
+                        reply = "这事我还想再看看。"
+                        evidence_ids = []
                 data.setdefault("npc_outputs", []).append(
                     {"role_id": role_id, "reply": reply, "is_lie": is_lie,
-                     "question": question, "proactive": True,
+                     "evidence_ids": evidence_ids, "question": question, "proactive": True,
                      "trigger_clue_id": decision.trigger_clue_id})
         return data
 
@@ -231,11 +254,12 @@ def build_turn_graph(script: Script, store: EventStore):
                 output_visible = [seat_id, output["role_id"]] if private else ["*"]
                 append(EventType.NPC_SPEECH, {"text": output["reply"], "role_id": output["role_id"],
                                               "proactive": output["proactive"],
+                                              "evidence_ids": output["evidence_ids"],
                                               "trigger_clue_id": output.get("trigger_clue_id")}, output_visible)
                 claim = Claim(claim_id=uuid4().hex, role_id=output["role_id"], turn=turn,
                               proposition=output["reply"],
                               truth_value="false" if output["is_lie"] else "unknown",
-                              is_lie=output["is_lie"], evidence_ids=[])
+                              is_lie=output["is_lie"], evidence_ids=output["evidence_ids"])
                 append(EventType.CLAIM, claim.model_dump() | {"probe": normalize_probe(output["question"])}, output_visible)
             if data.get("director_message"):
                 append(EventType.DM_NARRATION, {"text": data["director_message"], "director_level": 2}, ["*"])

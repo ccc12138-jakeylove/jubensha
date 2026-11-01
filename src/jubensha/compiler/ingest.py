@@ -3,6 +3,8 @@ import re
 from pathlib import Path
 
 from docx import Document
+from docx.table import Table
+from docx.text.paragraph import Paragraph
 from pydantic import BaseModel, ConfigDict
 from pypdf import PdfReader
 
@@ -24,9 +26,17 @@ def read_document(filename: str, content: bytes) -> str:
         except UnicodeDecodeError:
             return content.decode("gb18030")
     if suffix == ".docx":
-        return "\n".join(paragraph.text for paragraph in Document(io.BytesIO(content)).paragraphs)
+        lines = []
+        for block in Document(io.BytesIO(content)).iter_inner_content():
+            if isinstance(block, Paragraph):
+                prefix = "# " if block.style.name.startswith("Heading") else ""
+                lines.append(prefix + block.text)
+            elif isinstance(block, Table):
+                lines.extend(" | ".join(cell.text for cell in row.cells) for row in block.rows)
+        return "\n".join(lines)
     if suffix == ".pdf":
-        return "\n".join(page.extract_text() or "" for page in PdfReader(io.BytesIO(content)).pages)
+        return "\n".join(page.extract_text(extraction_mode="layout") or ""
+                         for page in PdfReader(io.BytesIO(content)).pages)
     raise ValueError(f"unsupported document type: {suffix}")
 
 

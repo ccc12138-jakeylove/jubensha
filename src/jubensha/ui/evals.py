@@ -33,6 +33,10 @@ def show_evals(fixture: Script, events: EventStore, scripts: ScriptStore) -> Non
             metrics = json.loads(run["metrics_json"])
             st.dataframe([{"指标": key, "结果": value} for key, value in metrics.items()],
                          hide_index=True, use_container_width=True)
+            results = json.loads(run["results_json"])
+            if results:
+                st.write("逐局结果")
+                st.dataframe(results, hide_index=True, use_container_width=True)
             cases = EvalStore(events).cases(run["run_id"])
             if cases:
                 st.write("失败与探针案例")

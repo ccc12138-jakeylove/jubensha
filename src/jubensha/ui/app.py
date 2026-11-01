@@ -201,6 +201,8 @@ def main():
                 for event in visible:
                     if event.type in (EventType.PLAYER_INPUT, EventType.NPC_SPEECH, EventType.DM_NARRATION):
                         st.write(f"#{event.seq} {event.type.value}：{event.payload.get('text', '')}")
+                        if event.type == EventType.NPC_SPEECH and event.payload.get("evidence_ids"):
+                            st.caption("依据：" + "、".join(event.payload["evidence_ids"]))
                     elif event.type == EventType.CLUE_FOUND:
                         st.write(f"#{event.seq} 线索：{script.clues[event.payload['clue_id']].display_name}")
                 if perception is not None:

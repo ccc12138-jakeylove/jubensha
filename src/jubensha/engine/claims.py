@@ -18,7 +18,7 @@ class ClaimJournal:
                 and event.payload.get("role_id") == self.role_id
                 and ("*" in event.visible_to or self.role_id in event.visible_to)][-limit:]
 
-    def prior_answer(self, question: str) -> tuple[str, bool] | None:
+    def prior_answer(self, question: str) -> tuple[str, bool, list[str]] | None:
         probe = normalize_probe(question)
         if not probe:
             return None
@@ -29,5 +29,6 @@ class ClaimJournal:
                 continue
             if event.type == EventType.CLAIM and event.payload.get("role_id") == self.role_id:
                 if event.payload.get("probe") == probe:
-                    return event.payload["proposition"], event.payload["is_lie"]
+                    return (event.payload["proposition"], event.payload["is_lie"],
+                            event.payload.get("evidence_ids", []))
         return None

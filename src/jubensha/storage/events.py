@@ -35,6 +35,12 @@ class EventStore:
                     latency_ms INTEGER NOT NULL, cost_usd REAL,
                     created_at TEXT DEFAULT CURRENT_TIMESTAMP
                 );
+                CREATE TABLE IF NOT EXISTS guard_cases (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT, game_id TEXT NOT NULL,
+                    role_id TEXT NOT NULL, question TEXT NOT NULL,
+                    candidate TEXT NOT NULL, reason TEXT NOT NULL,
+                    created_at TEXT DEFAULT CURRENT_TIMESTAMP
+                );
             """)
             columns = {row[1] for row in db.execute("PRAGMA table_info(llm_traces)")}
             if "cost_usd" not in columns:
@@ -60,6 +66,7 @@ class EventStore:
 
     def append(self, event: GameEvent) -> GameEvent:
         with self.connect() as db:
+            db.execute("BEGIN IMMEDIATE")
             next_seq = db.execute("SELECT COALESCE(MAX(seq),0)+1 FROM game_events WHERE game_id=?",
                                   (event.game_id,)).fetchone()[0]
             saved = event.model_copy(update={"seq": next_seq})
@@ -170,3 +177,14 @@ class EventStore:
         with self.connect() as db:
             db.execute("INSERT INTO llm_traces (game_id,node,prompt_version,input_tokens,output_tokens,latency_ms,cost_usd) VALUES (?,?,?,?,?,?,?)",
                        (game_id, node, prompt_version, input_tokens, output_tokens, latency_ms, cost_usd))
+
+    def guard_case(self, game_id: str, role_id: str, question: str,
+                   candidate: str, reason: str) -> None:
+        with self.connect() as db:
+            db.execute("INSERT INTO guard_cases (game_id,role_id,question,candidate,reason) VALUES (?,?,?,?,?)",
+                       (game_id, role_id, question, candidate, reason))
+
+    def guard_cases(self, game_id: str) -> list[dict]:
+        with self.connect() as db:
+            return [dict(row) for row in db.execute("SELECT * FROM guard_cases WHERE game_id=? ORDER BY id",
+                                                    (game_id,))]

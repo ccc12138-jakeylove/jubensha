@@ -108,13 +108,19 @@ class ScriptStore:
         with self.events.connect() as db:
             db.execute("UPDATE scripts SET ir_json=?,title=? WHERE script_id=?",
                        (json.dumps(parsed, ensure_ascii=False), script.title, script_id))
-            db.execute("DELETE FROM review_items WHERE script_id=? AND json_extract(item_json, '$.conflict_type')='script_bug'",
+            db.execute("DELETE FROM review_items WHERE script_id=? AND json_extract(item_json, '$.conflict_type') IN ('script_bug','linter_warning')",
                        (script_id,))
             for issue in report.blockers:
                 item = ReviewItem(field_path=issue.target_id, confidence=0,
                                   conflict_type="script_bug", message=issue.message)
                 db.execute("INSERT INTO review_items (script_id,item_json,resolved) VALUES (?,?,0)",
                            (script_id, item.model_dump_json()))
+            for issue in report.warnings:
+                if issue.severity == "high":
+                    item = ReviewItem(field_path=issue.target_id, confidence=0.5,
+                                      conflict_type="linter_warning", message=issue.message)
+                    db.execute("INSERT INTO review_items (script_id,item_json,resolved) VALUES (?,?,0)",
+                               (script_id, item.model_dump_json()))
 
     def publish(self, script_id: str) -> Script:
         draft = self.get_draft(script_id)
