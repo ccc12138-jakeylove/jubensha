@@ -3,8 +3,8 @@
 ## 已采用
 
 - 附录 A 仅给出 `Secret.lie_script` 的 `act/probe/answer`；Schema 按示例保留这三个字段。
-- P0 搜证按请求简化为地点首条未获得线索，不扣点数、不检查前置条件和容量。
-- `GameState` 由 SQLite 事件流重放，暂不写 LangGraph checkpoint；页面刷新后继续使用事件流。
+- P0 曾简化搜证；P1 改为玩家选搜查目标，按线索成本、地点容量、前置线索和每幕预算校验。目标名称在获得前可见，线索正文仍在搜得后显示。
+- `GameState` 由 SQLite 事件流重放；P1 另加 LangGraph 节点 checkpoint，用于单回合图状态排查与恢复，不代替事件事实来源。
 - 对局中 NPC 的事件视图仅含 `observable`，不包含真相动作或隐藏描述。
 
 ## 待确认

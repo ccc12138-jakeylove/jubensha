@@ -6,7 +6,8 @@ from uuid import uuid4
 import streamlit as st
 
 from jubensha.engine.fsm import Phase
-from jubensha.engine.loop import build_turn_graph
+from jubensha.engine.loop import build_turn_graph, run_turn
+from jubensha.engine.search import available_clues
 from jubensha.engine.world import TruthStore
 from jubensha.schema.events import EventType
 from jubensha.schema.ir import Script
@@ -41,29 +42,35 @@ def main():
 
     def play(action: str, **kwargs):
         try:
-            graph.invoke({"game_id": game_id, "action": action, **kwargs})
+            run_turn(graph, store, script, {"game_id": game_id, "action": action, **kwargs})
             st.rerun()
         except Exception as exc:
             st.error(str(exc))
 
+    def dialogue(phase: Phase):
+        for event in store.events(game_id):
+            if event.phase != phase or event.type not in (EventType.PLAYER_INPUT, EventType.NPC_SPEECH):
+                continue
+            name = "你" if event.type == EventType.PLAYER_INPUT else script.characters[event.payload["role_id"]].display_name
+            st.chat_message("user" if name == "你" else "assistant").write(f"{name}：{event.payload['text']}")
+
     st.caption(f"{state.phase.value.upper()} · 第 {state.turn} 回合 · 对局 {game_id[:8]}")
+    if state.phase not in (Phase.ENTRY, Phase.RECAP, Phase.END):
+        st.sidebar.metric("剩余搜证点", next(iter(state.seats.values())).search_points)
     if state.phase == Phase.ENTRY:
         st.write(script.acts[0].public_narrative)
         if st.button("开始阅读"):
             play("begin")
     elif state.phase == Phase.READ:
         st.subheader("案件简报")
-        st.write(script.acts[0].public_narrative)
+        st.write(next(act for act in script.acts if act.act_id == state.act_id).public_narrative)
         for character in script.characters.values():
             st.write(f"**{character.display_name}**：{character.public_profile}")
         if st.button("读完，进入公聊"):
             play("read_done")
     elif state.phase == Phase.ACT_OPEN:
         st.subheader("公聊")
-        for event in store.events(game_id):
-            if event.type in (EventType.PLAYER_INPUT, EventType.NPC_SPEECH):
-                name = "你" if event.type == EventType.PLAYER_INPUT else script.characters[event.payload["role_id"]].display_name
-                st.chat_message("user" if name == "你" else "assistant").write(f"{name}：{event.payload['text']}")
+        dialogue(Phase.ACT_OPEN)
         role_id = st.selectbox("询问对象", list(script.characters),
                                format_func=lambda x: script.characters[x].display_name)
         with st.form("talk", clear_on_submit=True):
@@ -71,36 +78,68 @@ def main():
             submitted = st.form_submit_button("询问")
         if submitted and question.strip():
             play("talk", role_id=role_id, text=question)
-        col1, col2 = st.columns(2)
+        col1, col2, col3 = st.columns(3)
         if col1.button("进入搜证"):
             play("enter_search")
-        if col2.button("正式指认"):
+        act = next(act for act in script.acts if act.act_id == state.act_id)
+        if col2.button("进入私聊", disabled=state.private_chats_used >= act.private_chat_budget):
+            play("enter_private", role_id=role_id)
+        if col3.button("进入对质"):
             play("enter_confront")
     elif state.phase == Phase.SEARCH:
         st.subheader("搜证")
         location_id = st.selectbox("地点", list(script.locations),
                                    format_func=lambda x: script.locations[x].display_name)
         st.write(script.locations[location_id].description)
-        if st.button("搜查"):
-            play("search", location_id=location_id)
+        candidates = available_clues(script, state, location_id)
+        st.caption(f"本地点剩余次数：{max(0, script.locations[location_id].capacity_per_act - state.search_counts.get(location_id, 0))}")
+        if candidates:
+            clue_id = st.selectbox("搜查目标", [clue.clue_id for clue in candidates],
+                                   format_func=lambda key: f"{script.clues[key].display_name} · {script.clues[key].search_cost} 点")
+            if st.button("搜查"):
+                play("search", location_id=location_id, clue_id=clue_id)
+        else:
+            st.info("这里没有当前可搜查的线索。")
         if st.button("返回公聊"):
             play("leave_search")
+    elif state.phase == Phase.PRIVATE:
+        st.subheader("私聊")
+        dialogue(Phase.PRIVATE)
+        role_id = state.private_role_id
+        st.write(script.characters[role_id].display_name)
+        with st.form("private_talk", clear_on_submit=True):
+            question = st.text_input("私聊内容")
+            submitted = st.form_submit_button("询问")
+        if submitted and question.strip():
+            play("private_talk", role_id=role_id, text=question)
+        if st.button("结束私聊"):
+            play("leave_private")
     elif state.phase == Phase.CONFRONT:
-        st.subheader("提交指认")
+        st.subheader("对质与指认")
+        dialogue(Phase.CONFRONT)
         role_id = st.selectbox("你指认谁", list(script.characters),
                                format_func=lambda x: script.characters[x].display_name)
-        motive = st.text_area("动机与推理")
         owned = list(dict.fromkeys(state.public_clue_ids + next(iter(state.seats.values())).private_clue_ids))
         evidence = st.multiselect("关键证据", owned,
                                   format_func=lambda x: script.clues[x].display_name)
+        with st.form("confront_talk", clear_on_submit=True):
+            question = st.text_input("对质内容")
+            confronted = st.form_submit_button("追问")
+        if confronted and question.strip():
+            play("confront_talk", role_id=role_id, text=question, evidence_ids=evidence)
+        motive = st.text_area("动机与推理")
         if st.button("提交指认"):
             play("vote", role_id=role_id, motive=motive, evidence_ids=evidence)
         if st.button("继续公聊"):
             play("leave_confront")
     elif state.phase == Phase.VOTE:
         st.write("指认已记录。")
-        if st.button("查看复盘"):
-            play("recap")
+        act_ids = [act.act_id for act in sorted(script.acts, key=lambda act: act.order)]
+        if state.act_id == act_ids[-1]:
+            if st.button("查看复盘"):
+                play("recap")
+        elif st.button("进入下一幕"):
+            play("next_act")
     elif state.phase in (Phase.RECAP, Phase.END):
         truth = TruthStore(script).recap()
         culprit_ids = {key for key, c in script.characters.items() if c.is_culprit}

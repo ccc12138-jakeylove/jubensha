@@ -61,7 +61,7 @@ class EventStore:
             row = db.execute("SELECT game_id FROM games ORDER BY created_at DESC, rowid DESC LIMIT 1").fetchone()
             return row[0] if row else None
 
-    def load(self, game_id: str, search_budget: int) -> GameState:
+    def load(self, game_id: str, search_budget: int, private_budget: int = 2) -> GameState:
         with self.connect() as db:
             game = db.execute("SELECT * FROM games WHERE game_id=?", (game_id,)).fetchone()
         if game is None:
@@ -72,10 +72,21 @@ class EventStore:
             state.turn = max(state.turn, event.turn)
             if event.type.value == "phase_change":
                 state.phase = Phase(event.payload["to"])
+                if state.phase == Phase.PRIVATE:
+                    state.private_chats_used += 1
+                    state.private_role_id = event.payload["role_id"]
+                elif event.phase == Phase.PRIVATE:
+                    state.private_role_id = None
                 if "act_id" in event.payload:
                     state.act_id = event.payload["act_id"]
+                    seat.search_points = event.payload.get("search_points_budget", search_budget)
+                    state.search_counts.clear()
+                    state.private_chats_used = 0
             elif event.type.value == "clue_found":
                 clue_id = event.payload["clue_id"]
+                seat.search_points -= event.payload.get("search_cost", 0)
+                location_id = event.payload["location_id"]
+                state.search_counts[location_id] = state.search_counts.get(location_id, 0) + 1
                 if event.visible_to == ["*"]:
                     state.public_clue_ids.append(clue_id)
                 else:

@@ -22,7 +22,7 @@ Copy-Item .env.example .env
 uv run streamlit run src/jubensha/ui/app.py
 ```
 
-`uv run pytest` 运行测试。对局事件保存到当前目录的 `game.db`，URL 中的 `game` 参数用于续局。
+`uv run pytest` 运行测试。对局事件和 LangGraph 节点快照保存到当前目录的 `game.db`，URL 中的 `game` 参数用于续局。搜证按线索成本扣点，地点容量和前置线索由代码校验；每幕可用点数和私聊次数由 fixture 决定。
 
 ## 更换 fixture
 

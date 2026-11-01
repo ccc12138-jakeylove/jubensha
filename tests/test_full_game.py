@@ -1,5 +1,5 @@
 from jubensha.engine.fsm import Phase
-from jubensha.engine.loop import build_turn_graph
+from jubensha.engine.loop import build_turn_graph, run_turn
 from jubensha.storage.events import EventStore
 
 
@@ -9,7 +9,7 @@ def test_full_game(script, tmp_path):
     graph = build_turn_graph(script, store)
 
     def play(action, **kwargs):
-        return graph.invoke({"game_id": "g", "action": action, **kwargs})
+        return run_turn(graph, store, script, {"game_id": "g", "action": action, **kwargs})
 
     play("begin")
     play("read_done")
@@ -17,7 +17,8 @@ def test_full_game(script, tmp_path):
     play("talk", role_id=roles[0], text="你昨晚在哪里？")
     play("talk", role_id=roles[1], text="你看见了什么？")
     play("enter_search")
-    result = play("search", location_id=script.clues[next(iter(script.clues))].location_id)
+    first_clue = script.clues[next(iter(script.clues))]
+    result = play("search", location_id=first_clue.location_id, clue_id=first_clue.clue_id)
     assert result["clue_id"]
     play("leave_search")
     play("enter_confront")
@@ -28,3 +29,6 @@ def test_full_game(script, tmp_path):
     assert state.turn == 10
     assert result["clue_id"] in state.public_clue_ids + state.seats["seat_1"].private_clue_ids
     assert [event.seq for event in store.events("g")] == list(range(1, len(store.events("g")) + 1))
+    restarted_graph = build_turn_graph(script, EventStore(tmp_path / "game.db"))
+    checkpoint = restarted_graph.get_state({"configurable": {"thread_id": "g:10"}})
+    assert checkpoint.values["target_phase"] == Phase.RECAP.value

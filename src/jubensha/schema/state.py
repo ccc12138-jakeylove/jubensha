@@ -28,6 +28,9 @@ class GameState(BaseModel):
     turn: int = 0
     seats: dict[str, SeatState]
     public_clue_ids: list[str] = Field(default_factory=list)
+    search_counts: dict[str, int] = Field(default_factory=dict)
+    private_chats_used: int = 0
+    private_role_id: str | None = None
     vote_role_id: str | None = None
     vote_motive: str = ""
     vote_evidence_ids: list[str] = Field(default_factory=list)
