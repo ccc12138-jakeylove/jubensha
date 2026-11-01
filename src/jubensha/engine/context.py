@@ -1,14 +1,13 @@
 import json
 
-from jubensha.engine.perception import build_perception
+from jubensha.engine.perception import PerceptionView
+from jubensha.engine.claims import ClaimJournal
 from jubensha.schema.events import GameEvent, EventType
-from jubensha.schema.ir import Script
-from jubensha.schema.state import GameState
 
 
-def build_context(script: Script, state: GameState, role_id: str, topic: str,
+def build_context(p: PerceptionView, topic: str,
                   events: list[GameEvent]) -> list[dict[str, str]]:
-    p = build_perception(script, state, role_id)
+    role_id = p.role_id
     words = set(topic)
     knowledge = p.known_events + p.known_clues
     relevant = sorted(knowledge, key=lambda x: sum(ch in json.dumps(x, ensure_ascii=False) for ch in words), reverse=True)[:8]
@@ -19,7 +18,7 @@ def build_context(script: Script, state: GameState, role_id: str, topic: str,
                      "goals": p.private_goals, "style": p.persona_style,
                      "constraints": p.speech_constraints, "forbidden_topics": p.forbidden_topics}),
         ("L2 知识切片", {"knowledge": relevant, "beliefs": p.false_beliefs}),
-        ("L3 声明日志", [e.payload for e in visible if e.type == EventType.CLAIM and e.payload.get("role_id") == role_id][-10:]),
+        ("L3 声明日志", ClaimJournal(events, role_id).recent()),
         ("L4 场景缓冲", [e.payload for e in speech[-8:]]),
         ("L5 公共摘要", p.public_summary),
         ("L6 关系笔记", p.relationships),

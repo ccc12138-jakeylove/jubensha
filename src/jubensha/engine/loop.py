@@ -1,14 +1,19 @@
 from __future__ import annotations
 
 from typing import TypedDict
+from uuid import uuid4
 
 from langgraph.graph import END, START, StateGraph
 
 from jubensha.agents.dm import narrate
 from jubensha.agents.npc import respond
 from jubensha.engine.fsm import Phase, transition
+from jubensha.engine.claims import normalize_probe
+from jubensha.engine.guard import blocked_input, check_npc_output, semantic_leak_check
+from jubensha.engine.perception import build_perception
 from jubensha.engine.search import select_clue
 from jubensha.schema.events import EventType, GameEvent
+from jubensha.schema.claims import Claim
 from jubensha.schema.ir import Script
 from jubensha.storage.events import EventStore
 from jubensha.storage.checkpoints import SQLiteCheckpointer
@@ -26,6 +31,10 @@ class TurnState(TypedDict, total=False):
     reply: str
     clue_id: str
     target_phase: str
+    npc_question: str
+    npc_is_lie: bool
+    leak_blocked: bool
+    input_blocked: bool
 
 
 def build_turn_graph(script: Script, store: EventStore):
@@ -36,6 +45,7 @@ def build_turn_graph(script: Script, store: EventStore):
 
     def ingest_turn(data: TurnState) -> TurnState:
         data["text"] = data.get("text", "").strip()[:1000]
+        data["input_blocked"] = blocked_input(data["text"])
         return data
 
     def router(data: TurnState) -> TurnState:
@@ -67,7 +77,15 @@ def build_turn_graph(script: Script, store: EventStore):
             raise ValueError("尚有下一幕")
         if action == "next_act" and act == ordered_acts[-1]:
             raise ValueError("已经是最后一幕")
-        data["route"] = "npc" if action in {"talk", "private_talk", "confront_talk"} else "search" if action == "search" else "dm"
+        data["route"] = ("guard" if data["input_blocked"] and action in {"talk", "private_talk", "confront_talk"}
+                         else "npc" if action in {"talk", "private_talk", "confront_talk"}
+                         else "search" if action == "search" else "dm")
+        return data
+
+    def guardrail_in(data: TurnState) -> TurnState:
+        data["npc_question"] = data["text"]
+        data["npc_is_lie"] = False
+        data["reply"] = "你说的这些我听不懂。还是谈谈那晚发生的事吧。"
         return data
 
     def npc_dispatch(data: TurnState) -> TurnState:
@@ -81,8 +99,10 @@ def build_turn_graph(script: Script, store: EventStore):
             if any(clue_id not in owned for clue_id in presented):
                 raise ValueError("只能出示已获得的线索")
             question += "\n出示的线索：" + "；".join(script.clues[clue_id].surface_text for clue_id in presented)
-        data["reply"] = respond(script, state, data["role_id"], question,
-                                store.events(data["game_id"]), store)
+        perception = build_perception(script, state, data["role_id"])
+        data["npc_question"] = question
+        data["reply"], data["npc_is_lie"] = respond(
+            perception, question, store.events(data["game_id"]), store, state.game_id)
         return data
 
     def search_evidence(data: TurnState) -> TurnState:
@@ -106,12 +126,23 @@ def build_turn_graph(script: Script, store: EventStore):
 
     def leak_check(data: TurnState) -> TurnState:
         if data["route"] == "npc":
-            # P0 guard: exact secret text and generated leak-surface phrases.
-            forbidden = [phrase for surface in script.leak_surfaces.values()
-                         for phrase in [surface.fact, *surface.paraphrases, *surface.implications]
-                         if len(phrase) >= 6]
-            if any(phrase in data["reply"] for phrase in forbidden):
+            state = store.load(data["game_id"], script.acts[0].search_points_budget)
+            perception = build_perception(script, state, data["role_id"])
+            def output_allowed():
+                return (check_npc_output(script, perception, data["reply"])
+                        and semantic_leak_check(script, data["reply"], store, state.game_id))
+            allowed = output_allowed()
+            for _ in range(2):
+                if allowed:
+                    break
+                data["leak_blocked"] = True
+                data["reply"], data["npc_is_lie"] = respond(
+                    perception, data["npc_question"], store.events(data["game_id"]),
+                    store, state.game_id, retry=True)
+                allowed = output_allowed()
+            if not allowed:
                 data["reply"] = "这事我不清楚。"
+                data["npc_is_lie"] = False
         return data
 
     def director_check(data: TurnState) -> TurnState:
@@ -131,6 +162,11 @@ def build_turn_graph(script: Script, store: EventStore):
             append(EventType.PLAYER_INPUT, {"text": data["text"], "role_id": data["role_id"],
                                             "private": private}, visible, seat_id)
             append(EventType.NPC_SPEECH, {"text": data["reply"], "role_id": data["role_id"]}, visible)
+            claim = Claim(claim_id=uuid4().hex, role_id=data["role_id"], turn=turn,
+                          proposition=data["reply"],
+                          truth_value="false" if data.get("npc_is_lie") else "unknown",
+                          is_lie=data.get("npc_is_lie", False), evidence_ids=[])
+            append(EventType.CLAIM, claim.model_dump() | {"probe": normalize_probe(data["npc_question"])}, visible)
         elif data["action"] == "search" and data.get("clue_id"):
             clue = script.clues[data["clue_id"]]
             append(EventType.CLUE_FOUND, {"clue_id": clue.clue_id, "location_id": clue.location_id,
@@ -176,6 +212,7 @@ def build_turn_graph(script: Script, store: EventStore):
 
     graph = StateGraph(TurnState)
     for name, func in (("ingest_turn", ingest_turn), ("router", router),
+                       ("guardrail_in", guardrail_in),
                        ("npc_dispatch", npc_dispatch), ("search_evidence", search_evidence),
                        ("dm_narrate", dm_narrate), ("leak_check", leak_check),
                        ("director_check", director_check), ("memory_write", memory_write),
@@ -184,7 +221,9 @@ def build_turn_graph(script: Script, store: EventStore):
     graph.add_edge(START, "ingest_turn")
     graph.add_edge("ingest_turn", "router")
     graph.add_conditional_edges("router", lambda d: d["route"],
-                                {"npc": "npc_dispatch", "search": "search_evidence", "dm": "dm_narrate"})
+                                {"npc": "npc_dispatch", "guard": "guardrail_in",
+                                 "search": "search_evidence", "dm": "dm_narrate"})
+    graph.add_edge("guardrail_in", "director_check")
     graph.add_edge("npc_dispatch", "leak_check")
     graph.add_edge("leak_check", "director_check")
     graph.add_edge("search_evidence", "director_check")

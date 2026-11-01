@@ -22,3 +22,11 @@ def test_perception_isolation(script, state):
 def test_truth_probe_is_absent(script, state):
     secret = script.secrets["S02"].content
     assert secret not in build_perception(script, state, "lin_suyun").model_dump_json()
+
+
+def test_private_relationship_requires_known_evidence(script, state):
+    perception = build_perception(script, state, "a_dai")
+    assert all(relationship["type"] != "kin" for relationship in perception.relationships)
+    script.knowledge["a_dai"].knows_clue_ids.append("C07")
+    perception = build_perception(script, state, "a_dai")
+    assert any(relationship["type"] == "kin" for relationship in perception.relationships)

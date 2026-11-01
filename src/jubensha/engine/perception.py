@@ -19,6 +19,7 @@ class PerceptionView(BaseModel):
     forbidden_topics: list[str]
     public_summary: dict
     relationships: list[dict]
+    lie_cues: list[dict[str, str]]
 
 
 def build_perception(script: Script, state: GameState, role_id: str) -> PerceptionView:
@@ -33,7 +34,13 @@ def build_perception(script: Script, state: GameState, role_id: str) -> Percepti
     clues = [{"clue_id": c.clue_id, "surface_text": c.surface_text}
              for c in script.clues.values() if c.clue_id in clue_ids]
     relationships = [r.model_dump(exclude={"evidence_clue_ids"}) for r in script.relationships
-                     if r.is_public or (r.from_role == role_id or r.to_role == role_id)]
+                     if r.is_public or ((r.from_role == role_id or r.to_role == role_id)
+                                        and bool(r.evidence_clue_ids)
+                                        and set(r.evidence_clue_ids).issubset(clue_ids))]
+    lie_cues = [{"probe": turn.probe, "answer": turn.answer}
+                for secret_id in character.secret_ids
+                for turn in (script.secrets[secret_id].lie_script or [])
+                if turn.act == state.act_id]
     return PerceptionView(
         role_id=role_id, display_name=character.display_name,
         public_profile=character.public_profile, private_goals=list(character.private_goals),
@@ -42,4 +49,5 @@ def build_perception(script: Script, state: GameState, role_id: str) -> Percepti
         false_beliefs=[b.model_dump(exclude={"refuted_by_clue_ids"}) for b in knowledge.false_beliefs],
         forbidden_topics=list(knowledge.forbidden_topics), public_summary=public,
         relationships=relationships,
+        lie_cues=lie_cues,
     )
