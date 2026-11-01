@@ -4,6 +4,8 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict
 
+from jubensha.engine.fsm import Phase
+
 
 class IRModel(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -21,7 +23,7 @@ class Act(IRModel):
     order: int
     title: str
     public_narrative: str
-    allowed_phases: list[str]
+    allowed_phases: list[Phase]
     entry_condition: str | None = None
     search_points_budget: int
     private_chat_budget: int = 2

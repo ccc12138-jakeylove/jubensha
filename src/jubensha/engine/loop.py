@@ -96,22 +96,23 @@ def build_turn_graph(script: Script, store: EventStore):
     def memory_write(data: TurnState) -> TurnState:
         state = store.load(data["game_id"], script.acts[0].search_points_budget)
         turn = state.turn + 1
+        seat_id = next(iter(state.seats))
         def append(kind: EventType, payload: dict, visible: list[str], actor: str = "system"):
             store.append(GameEvent(seq=0, game_id=state.game_id, actor_seat_id=actor,
                                    turn=turn, phase=state.phase, type=kind, payload=payload,
                                    visible_to=visible))
         if data["action"] == "talk":
-            append(EventType.PLAYER_INPUT, {"text": data["text"], "role_id": data["role_id"]}, ["*"], "seat_1")
+            append(EventType.PLAYER_INPUT, {"text": data["text"], "role_id": data["role_id"]}, ["*"], seat_id)
             append(EventType.NPC_SPEECH, {"text": data["reply"], "role_id": data["role_id"]}, ["*"])
         elif data["action"] == "search" and data.get("clue_id"):
             clue = script.clues[data["clue_id"]]
             append(EventType.CLUE_FOUND, {"clue_id": clue.clue_id, "location_id": clue.location_id},
-                   ["*"] if clue.visibility == "public" else ["seat_1"])
+                   ["*"] if clue.visibility == "public" else [seat_id])
         elif data["action"] == "vote":
             if data["role_id"] not in script.characters:
                 raise ValueError("unknown accused role")
             append(EventType.VOTE, {"role_id": data["role_id"], "motive": data.get("motive", ""),
-                                    "evidence_ids": data.get("evidence_ids", [])}, ["seat_1"], "seat_1")
+                                    "evidence_ids": data.get("evidence_ids", [])}, [seat_id], seat_id)
         else:
             append(EventType.DM_NARRATION, {"text": data["reply"]}, ["*"])
         return data
