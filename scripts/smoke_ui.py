@@ -8,9 +8,14 @@ with sync_playwright() as p:
     page = browser.new_page()
     page.goto(os.getenv("SMOKE_URL", "http://localhost:8501"), wait_until="domcontentloaded")
     page.get_by_role("heading", name="雾港谜案").wait_for(timeout=15000)
+    page.get_by_role("button", name="开局", exact=True).or_(
+        page.get_by_role("button", name="新开一局")
+    ).first.wait_for(timeout=15000)
     if page.get_by_role("button", name="开局", exact=True).count():
         page.get_by_role("button", name="开局", exact=True).click()
     else:
+        if not page.get_by_role("button", name="新开一局").count():
+            raise AssertionError(page.locator("body").inner_text()[-3000:])
         page.get_by_role("button", name="新开一局").click()
     page.get_by_role("button", name="开始阅读").click()
     page.get_by_role("button", name="读完，进入公聊").click()
@@ -39,5 +44,17 @@ with sync_playwright() as p:
     page.get_by_role("button", name="提交指认").click()
     page.get_by_role("button", name="查看复盘").click()
     page.get_by_text("真实凶手", exact=False).first.wait_for(timeout=10000)
-    print("UI smoke: 2 NPC turns, private chat, clue, refresh, confrontation, vote and recap passed")
+    page.get_by_text("事件回放", exact=True).click()
+    page.get_by_text("IR 参考证据", exact=False).wait_for(timeout=10000)
+    replay_slider = page.get_by_role("slider", name="事件序号")
+    replay_slider.press("Home")
+    page.get_by_text("第 0 回合", exact=False).wait_for(timeout=10000)
+    replay_slider.press("End")
+    replay_view = page.get_by_label("视角")
+    replay_view.press("ArrowDown")
+    replay_view.press("ArrowDown")
+    replay_view.press("Enter")
+    assert replay_view.input_value() != "玩家"
+    page.get_by_text("该时刻角色认知").wait_for(timeout=10000)
+    print("UI smoke: dialogue, private chat, clue, refresh, confrontation, vote and replay passed")
     browser.close()

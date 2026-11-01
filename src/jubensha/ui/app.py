@@ -8,6 +8,7 @@ import streamlit as st
 from jubensha.engine.fsm import Phase
 from jubensha.engine.loop import build_turn_graph, run_turn
 from jubensha.engine.search import available_clues
+from jubensha.engine.replay import reference_evidence, replay_at
 from jubensha.engine.world import TruthStore
 from jubensha.schema.events import EventType
 from jubensha.schema.ir import Script
@@ -155,6 +156,29 @@ def main():
         st.subheader("秘密与线索")
         for secret in script.secrets.values():
             st.write(f"{secret.secret_id}：{secret.content}")
+        with st.expander("事件回放", expanded=False):
+            all_events = store.events(game_id)
+            if all_events:
+                seq = st.slider("事件序号", 0, all_events[-1].seq, all_events[-1].seq)
+                seat_id = next(iter(state.seats))
+                perspectives = [seat_id, *script.characters]
+                perspective = st.selectbox("视角", perspectives,
+                                            format_func=lambda key: "玩家" if key == seat_id else script.characters[key].display_name)
+                historic, visible, perception = replay_at(script, store, game_id, seq, perspective)
+                st.write(f"第 {historic.turn} 回合 · {historic.phase.value.upper()}")
+                for event in visible:
+                    if event.type in (EventType.PLAYER_INPUT, EventType.NPC_SPEECH, EventType.DM_NARRATION):
+                        st.write(f"#{event.seq} {event.type.value}：{event.payload.get('text', '')}")
+                    elif event.type == EventType.CLUE_FOUND:
+                        st.write(f"#{event.seq} 线索：{script.clues[event.payload['clue_id']].display_name}")
+                if perception is not None:
+                    st.write("该时刻角色认知")
+                    st.json(perception.model_dump())
+            player_clues = set(state.public_clue_ids) | set(next(iter(state.seats.values())).private_clue_ids)
+            reference = reference_evidence(script)
+            st.write("IR 参考证据：" + "、".join(script.clues[key].display_name for key in reference))
+            st.write("已获得：" + "、".join(script.clues[key].display_name for key in reference if key in player_clues))
+            st.write("未获得：" + "、".join(script.clues[key].display_name for key in reference if key not in player_clues))
         if state.phase == Phase.RECAP and st.button("结束本局"):
             play("end")
     if state.phase not in (Phase.ENTRY, Phase.READ):

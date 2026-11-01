@@ -51,9 +51,13 @@ class EventStore:
                        (saved.game_id, saved.seq, saved.model_dump_json()))
         return saved
 
-    def events(self, game_id: str) -> list[GameEvent]:
+    def events(self, game_id: str, up_to_seq: int | None = None) -> list[GameEvent]:
         with self.connect() as db:
-            rows = db.execute("SELECT event_json FROM game_events WHERE game_id=? ORDER BY seq", (game_id,))
+            if up_to_seq is None:
+                rows = db.execute("SELECT event_json FROM game_events WHERE game_id=? ORDER BY seq", (game_id,))
+            else:
+                rows = db.execute("SELECT event_json FROM game_events WHERE game_id=? AND seq<=? ORDER BY seq",
+                                  (game_id, up_to_seq))
             return [GameEvent.model_validate_json(row[0]) for row in rows]
 
     def latest_game(self) -> str | None:
@@ -61,14 +65,15 @@ class EventStore:
             row = db.execute("SELECT game_id FROM games ORDER BY created_at DESC, rowid DESC LIMIT 1").fetchone()
             return row[0] if row else None
 
-    def load(self, game_id: str, search_budget: int, private_budget: int = 2) -> GameState:
+    def load(self, game_id: str, search_budget: int, private_budget: int = 2,
+             up_to_seq: int | None = None) -> GameState:
         with self.connect() as db:
             game = db.execute("SELECT * FROM games WHERE game_id=?", (game_id,)).fetchone()
         if game is None:
             raise KeyError(game_id)
         seat = SeatState(seat_id=game["seat_id"], search_points=search_budget)
         state = GameState(game_id=game_id, script_id=game["script_id"], act_id=game["act_id"], seats={seat.seat_id: seat})
-        for event in self.events(game_id):
+        for event in self.events(game_id, up_to_seq=up_to_seq):
             state.turn = max(state.turn, event.turn)
             if event.type.value == "phase_change":
                 state.phase = Phase(event.payload["to"])

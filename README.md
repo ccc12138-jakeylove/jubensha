@@ -26,6 +26,8 @@ uv run streamlit run src/jubensha/ui/app.py
 
 P2 中，NPC 只接收角色认知视图；声明随事件追加。输出先做确定性泄密检查；配置 `LLM_MODEL` 时再经 LiteLLM 做语义判定。未配置模型的测试只能验证结构隔离与静态拦截，不能代表真实模型的泄密率。
 
+P3 可在复盘页按事件序号回放，并切换玩家或 NPC 视角。历史对话摘要按视角写入 SQLite；设置 `CONTEXT_MODE=full` 可临时使用全量对话上下文。用 `uv run python scripts/compare_contexts.py` 比较同一局的两种上下文大小；配置模型后加 `--generate` 对比回答与耗时。
+
 ## 更换 fixture
 
 设置 `SCRIPT_FIXTURE` 为另一个符合 `Script` schema 的 JSON 文件路径，启动前先用 `Script.model_validate_json` 校验。引擎不读取固定剧本 ID 或固定地点 ID。
