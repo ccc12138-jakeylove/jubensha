@@ -11,14 +11,14 @@ def configured() -> bool:
 
 
 def generate(store: EventStore, game_id: str, node: str, prompt_version: str,
-             messages: list[dict[str, str]]) -> str:
+             messages: list[dict[str, str]], max_tokens: int = 180) -> str:
     model = os.environ["LLM_MODEL"]
     start = time.perf_counter()
     try:
         response = completion(model=model, messages=messages,
                               api_key=os.getenv("LLM_API_KEY") or None,
                               api_base=os.getenv("LLM_BASE_URL") or None,
-                              max_tokens=180, temperature=0.3)
+                              max_tokens=max_tokens, temperature=0.3)
         content = response.choices[0].message.content or ""
         usage = response.usage
         return content

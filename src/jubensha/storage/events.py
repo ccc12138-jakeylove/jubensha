@@ -65,6 +65,13 @@ class EventStore:
             row = db.execute("SELECT game_id FROM games ORDER BY created_at DESC, rowid DESC LIMIT 1").fetchone()
             return row[0] if row else None
 
+    def game_script_id(self, game_id: str) -> str:
+        with self.connect() as db:
+            row = db.execute("SELECT script_id FROM games WHERE game_id=?", (game_id,)).fetchone()
+            if row is None:
+                raise KeyError(game_id)
+            return row[0]
+
     def load(self, game_id: str, search_budget: int, private_budget: int = 2,
              up_to_seq: int | None = None) -> GameState:
         with self.connect() as db:

@@ -13,6 +13,8 @@ from jubensha.engine.world import TruthStore
 from jubensha.schema.events import EventType
 from jubensha.schema.ir import Script
 from jubensha.storage.events import EventStore
+from jubensha.storage.scripts import ScriptStore
+from jubensha.ui.library import show_library, show_review
 
 
 def fixture_path() -> Path:
@@ -21,11 +23,24 @@ def fixture_path() -> Path:
 
 def main():
     st.set_page_config(page_title="剧本杀", layout="wide")
-    script = Script.model_validate(json.loads(fixture_path().read_text(encoding="utf-8")))
+    fixture = Script.model_validate(json.loads(fixture_path().read_text(encoding="utf-8")))
     store = EventStore(os.getenv("GAME_DB", "game.db"))
+    scripts = ScriptStore(store)
+    view = st.query_params.get("view")
+    if view == "library":
+        show_library(fixture, store, scripts)
+        return
+    if view == "review":
+        show_review(scripts, st.query_params.get("draft", ""))
+        return
     game_id = st.query_params.get("game")
     if not game_id:
         game_id = store.latest_game()
+    if st.sidebar.button("剧本库"):
+        st.query_params["view"] = "library"
+        st.rerun()
+    script_id = store.game_script_id(game_id) if game_id else fixture.script_id
+    script = fixture if script_id == fixture.script_id else scripts.load_published(script_id)
     st.title(script.title)
     if not game_id:
         if st.button("开局"):

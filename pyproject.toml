@@ -2,7 +2,14 @@
 name = "jubensha-agent"
 version = "0.1.0"
 requires-python = ">=3.11"
-dependencies = ["pydantic>=2,<3", "langgraph>=0.6,<2", "streamlit>=1.40,<2", "litellm>=1.70,<2"]
+dependencies = [
+    "pydantic>=2,<3",
+    "langgraph>=0.6,<2",
+    "streamlit>=1.40,<2",
+    "litellm>=1.70,<2",
+    "python-docx>=1.2.0",
+    "pypdf>=6.21.4",
+]
 
 [build-system]
 requires = ["hatchling"]
