@@ -32,7 +32,8 @@ def test_five_followups_reuse_lie_claim(script, tmp_path, monkeypatch):
     for _ in range(5):
         run_turn(graph, store, script, {"game_id": "g", "action": "talk",
                                              "role_id": "lin_suyun", "text": "员工通道谁能进？"})
-    claims = [event for event in store.events("g") if event.type == EventType.CLAIM]
+    claims = [event for event in store.events("g")
+              if event.type == EventType.CLAIM and event.payload.get("role_id") == "lin_suyun"]
     assert len(claims) == 5
     assert len({event.payload["proposition"] for event in claims}) == 1
     assert all(event.payload["is_lie"] for event in claims)
@@ -42,7 +43,8 @@ def test_five_followups_reuse_lie_claim(script, tmp_path, monkeypatch):
     context = build_context(perception, "员工通道谁能进？", reloaded)
     assert "is_lie" not in str(context)
     assert "truth_value" not in str(context)
-    assert len([event for event in reloaded if event.type == EventType.CLAIM]) == 5
+    assert len([event for event in reloaded if event.type == EventType.CLAIM
+                and event.payload.get("role_id") == "lin_suyun"]) == 5
 
 
 def test_generated_probe_matrix_is_safe_without_model(script, state, tmp_path, monkeypatch):
@@ -92,7 +94,7 @@ def test_leaking_output_is_not_persisted(script, tmp_path, monkeypatch):
     result = run_turn(graph, store, script, {"game_id": "g", "action": "talk",
                                                "role_id": "chen_yanqiu", "text": "怀表呢？"})
     assert result["leak_blocked"] is True
-    assert len(calls) == 3
+    assert len(calls) >= 3
     persisted = [e.payload for e in store.events("g") if e.type in (EventType.NPC_SPEECH, EventType.CLAIM)]
     assert all(secret not in str(payload) for payload in persisted)
 

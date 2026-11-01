@@ -30,6 +30,8 @@ P3 可在复盘页按事件序号回放，并切换玩家或 NPC 视角。历史
 
 P4 可在侧栏进入剧本库，上传 `.txt/.md/.docx/.pdf` 或完整 IR JSON。自然语言文件需要先配置模型；抽取失败和低置信度字段进入校对页。编辑 IR、解决校对项且质检无 blocker 后，才能发布并开局。
 
+P5 公聊支持“面向全场”一次询问两位 NPC；导演只读取公开轨迹，安排 NPC 主动发言、公开线索反应及分级卡关提示。阶段和线索仍由代码裁定。
+
 ## 更换 fixture
 
 设置 `SCRIPT_FIXTURE` 为另一个符合 `Script` schema 的 JSON 文件路径，启动前先用 `Script.model_validate_json` 校验。引擎不读取固定剧本 ID 或固定地点 ID。

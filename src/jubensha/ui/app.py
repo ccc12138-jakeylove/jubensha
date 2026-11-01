@@ -65,7 +65,11 @@ def main():
 
     def dialogue(phase: Phase):
         for event in store.events(game_id):
-            if event.phase != phase or event.type not in (EventType.PLAYER_INPUT, EventType.NPC_SPEECH):
+            if event.phase != phase or event.type not in (EventType.PLAYER_INPUT, EventType.NPC_SPEECH, EventType.DM_NARRATION):
+                continue
+            if event.type == EventType.DM_NARRATION:
+                if event.payload.get("director_level"):
+                    st.chat_message("assistant").write(f"主持人：{event.payload['text']}")
                 continue
             name = "你" if event.type == EventType.PLAYER_INPUT else script.characters[event.payload["role_id"]].display_name
             st.chat_message("user" if name == "你" else "assistant").write(f"{name}：{event.payload['text']}")
@@ -87,8 +91,8 @@ def main():
     elif state.phase == Phase.ACT_OPEN:
         st.subheader("公聊")
         dialogue(Phase.ACT_OPEN)
-        role_id = st.selectbox("询问对象", list(script.characters),
-                               format_func=lambda x: script.characters[x].display_name)
+        role_id = st.selectbox("询问对象", ["", *script.characters],
+                               format_func=lambda x: "面向全场" if not x else script.characters[x].display_name)
         with st.form("talk", clear_on_submit=True):
             question = st.text_input("你想问什么")
             submitted = st.form_submit_button("询问")
@@ -98,7 +102,7 @@ def main():
         if col1.button("进入搜证"):
             play("enter_search")
         act = next(act for act in script.acts if act.act_id == state.act_id)
-        if col2.button("进入私聊", disabled=state.private_chats_used >= act.private_chat_budget):
+        if col2.button("进入私聊", disabled=not role_id or state.private_chats_used >= act.private_chat_budget):
             play("enter_private", role_id=role_id)
         if col3.button("进入对质"):
             play("enter_confront")

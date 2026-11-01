@@ -2,11 +2,13 @@ from __future__ import annotations
 
 from typing import TypedDict
 from uuid import uuid4
+from concurrent.futures import ThreadPoolExecutor
 
 from langgraph.graph import END, START, StateGraph
 
 from jubensha.agents.dm import narrate
 from jubensha.agents.npc import respond
+from jubensha.agents.director import decide
 from jubensha.engine.fsm import Phase, transition
 from jubensha.engine.claims import normalize_probe
 from jubensha.engine.guard import blocked_input, check_npc_output, semantic_leak_check
@@ -35,6 +37,8 @@ class TurnState(TypedDict, total=False):
     npc_is_lie: bool
     leak_blocked: bool
     input_blocked: bool
+    npc_outputs: list[dict]
+    director_message: str
 
 
 def build_turn_graph(script: Script, store: EventStore):
@@ -86,12 +90,25 @@ def build_turn_graph(script: Script, store: EventStore):
         data["npc_question"] = data["text"]
         data["npc_is_lie"] = False
         data["reply"] = "你说的这些我听不懂。还是谈谈那晚发生的事吧。"
+        data["npc_outputs"] = [{"role_id": data.get("role_id") or next(iter(script.characters)),
+                                "reply": data["reply"], "is_lie": False,
+                                "question": data["text"], "proactive": False}]
         return data
 
     def npc_dispatch(data: TurnState) -> TurnState:
         state = store.load(data["game_id"], script.acts[0].search_points_budget)
-        if data["role_id"] not in script.characters:
+        explicit_role = data.get("role_id")
+        if explicit_role and explicit_role not in script.characters:
             raise ValueError("unknown role")
+        if not explicit_role and data["action"] != "talk":
+            raise ValueError("role is required outside public discussion")
+        if explicit_role:
+            roles = [explicit_role]
+        else:
+            topic_chars = set(data["text"])
+            roles = sorted(script.characters,
+                           key=lambda role_id: sum(char in script.characters[role_id].public_profile
+                                                   for char in topic_chars), reverse=True)[:2]
         question = data["text"]
         if data["action"] == "confront_talk":
             owned = set(state.public_clue_ids) | set(next(iter(state.seats.values())).private_clue_ids)
@@ -99,10 +116,20 @@ def build_turn_graph(script: Script, store: EventStore):
             if any(clue_id not in owned for clue_id in presented):
                 raise ValueError("只能出示已获得的线索")
             question += "\n出示的线索：" + "；".join(script.clues[clue_id].surface_text for clue_id in presented)
-        perception = build_perception(script, state, data["role_id"])
         data["npc_question"] = question
-        data["reply"], data["npc_is_lie"] = respond(
-            perception, question, store.events(data["game_id"]), store, state.game_id)
+        history = store.events(data["game_id"])
+        def answer(role_id: str) -> dict:
+            perception = build_perception(script, state, role_id)
+            reply, is_lie = respond(perception, question, history, store, state.game_id)
+            return {"role_id": role_id, "reply": reply, "is_lie": is_lie,
+                    "question": question, "proactive": False}
+        if len(roles) > 1:
+            with ThreadPoolExecutor(max_workers=2) as executor:
+                data["npc_outputs"] = list(executor.map(answer, roles))
+        else:
+            data["npc_outputs"] = [answer(roles[0])]
+        data["reply"] = "\n".join(item["reply"] for item in data["npc_outputs"])
+        data["npc_is_lie"] = any(item["is_lie"] for item in data["npc_outputs"])
         return data
 
     def search_evidence(data: TurnState) -> TurnState:
@@ -127,25 +154,58 @@ def build_turn_graph(script: Script, store: EventStore):
     def leak_check(data: TurnState) -> TurnState:
         if data["route"] == "npc":
             state = store.load(data["game_id"], script.acts[0].search_points_budget)
-            perception = build_perception(script, state, data["role_id"])
-            def output_allowed():
-                return (check_npc_output(script, perception, data["reply"])
-                        and semantic_leak_check(script, data["reply"], store, state.game_id))
-            allowed = output_allowed()
-            for _ in range(2):
-                if allowed:
-                    break
-                data["leak_blocked"] = True
-                data["reply"], data["npc_is_lie"] = respond(
-                    perception, data["npc_question"], store.events(data["game_id"]),
-                    store, state.game_id, retry=True)
+            for output in data["npc_outputs"]:
+                perception = build_perception(script, state, output["role_id"])
+                def output_allowed():
+                    return (check_npc_output(script, perception, output["reply"])
+                            and semantic_leak_check(script, output["reply"], store, state.game_id))
                 allowed = output_allowed()
-            if not allowed:
-                data["reply"] = "这事我不清楚。"
-                data["npc_is_lie"] = False
+                for _ in range(2):
+                    if allowed:
+                        break
+                    data["leak_blocked"] = True
+                    output["reply"], output["is_lie"] = respond(
+                        perception, output["question"], store.events(data["game_id"]),
+                        store, state.game_id, retry=True)
+                    allowed = output_allowed()
+                if not allowed:
+                    output["reply"] = "这事我不清楚。"
+                    output["is_lie"] = False
+            data["reply"] = "\n".join(item["reply"] for item in data["npc_outputs"])
+            data["npc_is_lie"] = any(item["is_lie"] for item in data["npc_outputs"])
         return data
 
     def director_check(data: TurnState) -> TurnState:
+        if data["action"] != "talk" or data.get("input_blocked"):
+            return data
+        state = store.load(data["game_id"], script.acts[0].search_points_budget)
+        history = store.events(data["game_id"])
+        decision = decide(state.phase, history,
+                          {role_id: character.public_profile for role_id, character in script.characters.items()},
+                          data["text"], {item["role_id"] for item in data.get("npc_outputs", [])},
+                          {clue_id: script.clues[clue_id].surface_text for clue_id in state.public_clue_ids})
+        if decision.action == "hint" and decision.level >= 2:
+            visited = {event.payload.get("location_id") for event in history
+                       if event.type == EventType.CLUE_FOUND and "*" in event.visible_to}
+            locations = [location.display_name for location in script.locations.values()
+                         if location.location_id not in visited and location.searchable]
+            if decision.level == 2 and locations:
+                data["director_message"] = f"你们还可以检查{locations[0]}。"
+            else:
+                data["director_message"] = "已谈过的方向暂时没有新进展。可以继续搜证，或提交当前推理。"
+        elif decision.action == "proactive" and decision.target:
+            role_id = decision.target
+            if role_id not in {item["role_id"] for item in data.get("npc_outputs", [])}:
+                perception = build_perception(script, state, role_id)
+                question = (f"玩家刚找到这条线索：{script.clues[decision.trigger_clue_id].surface_text}。你怎么看？"
+                            if decision.trigger_clue_id else "你对刚才的话怎么看？")
+                reply, is_lie = respond(perception, question, history, store, state.game_id)
+                if not check_npc_output(script, perception, reply) or not semantic_leak_check(script, reply, store, state.game_id):
+                    reply, is_lie = "这事我还想再看看。", False
+                data.setdefault("npc_outputs", []).append(
+                    {"role_id": role_id, "reply": reply, "is_lie": is_lie,
+                     "question": question, "proactive": True,
+                     "trigger_clue_id": decision.trigger_clue_id})
         return data
 
     def memory_write(data: TurnState) -> TurnState:
@@ -159,14 +219,20 @@ def build_turn_graph(script: Script, store: EventStore):
         if data["action"] in {"talk", "private_talk", "confront_talk"}:
             private = data["action"] == "private_talk"
             visible = [seat_id, data["role_id"]] if private else ["*"]
-            append(EventType.PLAYER_INPUT, {"text": data["text"], "role_id": data["role_id"],
+            append(EventType.PLAYER_INPUT, {"text": data["text"], "role_id": data.get("role_id") or "",
                                             "private": private}, visible, seat_id)
-            append(EventType.NPC_SPEECH, {"text": data["reply"], "role_id": data["role_id"]}, visible)
-            claim = Claim(claim_id=uuid4().hex, role_id=data["role_id"], turn=turn,
-                          proposition=data["reply"],
-                          truth_value="false" if data.get("npc_is_lie") else "unknown",
-                          is_lie=data.get("npc_is_lie", False), evidence_ids=[])
-            append(EventType.CLAIM, claim.model_dump() | {"probe": normalize_probe(data["npc_question"])}, visible)
+            for output in data["npc_outputs"]:
+                output_visible = [seat_id, output["role_id"]] if private else ["*"]
+                append(EventType.NPC_SPEECH, {"text": output["reply"], "role_id": output["role_id"],
+                                              "proactive": output["proactive"],
+                                              "trigger_clue_id": output.get("trigger_clue_id")}, output_visible)
+                claim = Claim(claim_id=uuid4().hex, role_id=output["role_id"], turn=turn,
+                              proposition=output["reply"],
+                              truth_value="false" if output["is_lie"] else "unknown",
+                              is_lie=output["is_lie"], evidence_ids=[])
+                append(EventType.CLAIM, claim.model_dump() | {"probe": normalize_probe(output["question"])}, output_visible)
+            if data.get("director_message"):
+                append(EventType.DM_NARRATION, {"text": data["director_message"], "director_level": 2}, ["*"])
         elif data["action"] == "search" and data.get("clue_id"):
             clue = script.clues[data["clue_id"]]
             append(EventType.CLUE_FOUND, {"clue_id": clue.clue_id, "location_id": clue.location_id,
