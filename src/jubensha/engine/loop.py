@@ -39,6 +39,7 @@ class TurnState(TypedDict, total=False):
     input_blocked: bool
     npc_outputs: list[dict]
     director_message: str
+    actor_seat_id: str
 
 
 def build_turn_graph(script: Script, store: EventStore):
@@ -55,6 +56,10 @@ def build_turn_graph(script: Script, store: EventStore):
     def router(data: TurnState) -> TurnState:
         action = data["action"]
         state = store.load(data["game_id"], script.acts[0].search_points_budget)
+        actor_seat_id = data.get("actor_seat_id") or next(iter(state.seats))
+        if actor_seat_id not in state.seats:
+            raise PermissionError("unknown seat")
+        data["actor_seat_id"] = actor_seat_id
         valid = {
             "begin": {Phase.ENTRY}, "read_done": {Phase.READ},
             "enter_search": {Phase.ACT_OPEN}, "leave_search": {Phase.SEARCH},
@@ -111,7 +116,7 @@ def build_turn_graph(script: Script, store: EventStore):
                                                    for char in topic_chars), reverse=True)[:2]
         question = data["text"]
         if data["action"] == "confront_talk":
-            owned = set(state.public_clue_ids) | set(next(iter(state.seats.values())).private_clue_ids)
+            owned = set(state.public_clue_ids) | set(state.seats[data["actor_seat_id"]].private_clue_ids)
             presented = data.get("evidence_ids", [])
             if any(clue_id not in owned for clue_id in presented):
                 raise ValueError("只能出示已获得的线索")
@@ -134,7 +139,8 @@ def build_turn_graph(script: Script, store: EventStore):
 
     def search_evidence(data: TurnState) -> TurnState:
         state = store.load(data["game_id"], script.acts[0].search_points_budget)
-        clue = select_clue(script, state, data["location_id"], data["clue_id"])
+        clue = select_clue(script, state, data["location_id"], data["clue_id"],
+                           data["actor_seat_id"])
         data["reply"] = clue.surface_text
         return data
 
@@ -211,7 +217,7 @@ def build_turn_graph(script: Script, store: EventStore):
     def memory_write(data: TurnState) -> TurnState:
         state = store.load(data["game_id"], script.acts[0].search_points_budget)
         turn = state.turn + 1
-        seat_id = next(iter(state.seats))
+        seat_id = data["actor_seat_id"]
         def append(kind: EventType, payload: dict, visible: list[str], actor: str = "system"):
             store.append(GameEvent(seq=0, game_id=state.game_id, actor_seat_id=actor,
                                    turn=turn, phase=state.phase, type=kind, payload=payload,
@@ -237,11 +243,11 @@ def build_turn_graph(script: Script, store: EventStore):
             clue = script.clues[data["clue_id"]]
             append(EventType.CLUE_FOUND, {"clue_id": clue.clue_id, "location_id": clue.location_id,
                                           "search_cost": clue.search_cost, "act_id": state.act_id},
-                   ["*"] if clue.visibility == "public" else [seat_id])
+                   ["*"] if clue.visibility == "public" else [seat_id], seat_id)
         elif data["action"] == "vote":
             if data["role_id"] not in script.characters:
                 raise ValueError("unknown accused role")
-            owned = set(state.public_clue_ids) | set(next(iter(state.seats.values())).private_clue_ids)
+            owned = set(state.public_clue_ids) | set(state.seats[seat_id].private_clue_ids)
             if any(clue_id not in owned for clue_id in data.get("evidence_ids", [])):
                 raise ValueError("只能引用已获得的线索")
             append(EventType.VOTE, {"role_id": data["role_id"], "motive": data.get("motive", ""),

@@ -16,6 +16,10 @@ class EventStore:
                     game_id TEXT PRIMARY KEY, script_id TEXT NOT NULL, act_id TEXT NOT NULL,
                     seat_id TEXT NOT NULL, created_at TEXT DEFAULT CURRENT_TIMESTAMP
                 );
+                CREATE TABLE IF NOT EXISTS game_seats (
+                    game_id TEXT NOT NULL, seat_id TEXT NOT NULL, role_id TEXT,
+                    PRIMARY KEY (game_id, seat_id)
+                );
                 CREATE TABLE IF NOT EXISTS game_events (
                     game_id TEXT NOT NULL, seq INTEGER NOT NULL, event_json TEXT NOT NULL,
                     PRIMARY KEY (game_id, seq)
@@ -35,6 +39,7 @@ class EventStore:
             columns = {row[1] for row in db.execute("PRAGMA table_info(llm_traces)")}
             if "cost_usd" not in columns:
                 db.execute("ALTER TABLE llm_traces ADD COLUMN cost_usd REAL")
+            db.execute("INSERT OR IGNORE INTO game_seats (game_id,seat_id,role_id) SELECT game_id,seat_id,NULL FROM games")
 
     def connect(self):
         db = sqlite3.connect(self.path)
@@ -45,6 +50,13 @@ class EventStore:
         with self.connect() as db:
             db.execute("INSERT INTO games (game_id,script_id,act_id,seat_id) VALUES (?,?,?,?)",
                        (game_id, script_id, act_id, seat_id))
+            db.execute("INSERT INTO game_seats VALUES (?,?,NULL)", (game_id, seat_id))
+
+    def add_seat(self, game_id: str, seat_id: str, role_id: str | None = None) -> None:
+        with self.connect() as db:
+            if not db.execute("SELECT 1 FROM games WHERE game_id=?", (game_id,)).fetchone():
+                raise KeyError(game_id)
+            db.execute("INSERT INTO game_seats VALUES (?,?,?)", (game_id, seat_id, role_id))
 
     def append(self, event: GameEvent) -> GameEvent:
         with self.connect() as db:
@@ -64,6 +76,19 @@ class EventStore:
                                   (game_id, up_to_seq))
             return [GameEvent.model_validate_json(row[0]) for row in rows]
 
+    def events_for_seat(self, game_id: str, seat_id: str,
+                        up_to_seq: int | None = None) -> list[GameEvent]:
+        with self.connect() as db:
+            seat = db.execute("SELECT role_id FROM game_seats WHERE game_id=? AND seat_id=?",
+                              (game_id, seat_id)).fetchone()
+            if seat is None:
+                raise PermissionError("seat does not belong to this game")
+        principals = {seat_id}
+        if seat["role_id"]:
+            principals.add(seat["role_id"])
+        return [event for event in self.events(game_id, up_to_seq)
+                if "*" in event.visible_to or principals.intersection(event.visible_to)]
+
     def latest_game(self) -> str | None:
         with self.connect() as db:
             row = db.execute("SELECT game_id FROM games ORDER BY created_at DESC, rowid DESC LIMIT 1").fetchone()
@@ -82,8 +107,14 @@ class EventStore:
             game = db.execute("SELECT * FROM games WHERE game_id=?", (game_id,)).fetchone()
         if game is None:
             raise KeyError(game_id)
-        seat = SeatState(seat_id=game["seat_id"], search_points=search_budget)
-        state = GameState(game_id=game_id, script_id=game["script_id"], act_id=game["act_id"], seats={seat.seat_id: seat})
+        with self.connect() as db:
+            seat_rows = db.execute("SELECT seat_id,role_id FROM game_seats WHERE game_id=? ORDER BY rowid",
+                                   (game_id,)).fetchall()
+        seats = {row["seat_id"]: SeatState(seat_id=row["seat_id"], role_id=row["role_id"],
+                                            search_points=search_budget) for row in seat_rows}
+        if not seats:
+            seats[game["seat_id"]] = SeatState(seat_id=game["seat_id"], search_points=search_budget)
+        state = GameState(game_id=game_id, script_id=game["script_id"], act_id=game["act_id"], seats=seats)
         for event in self.events(game_id, up_to_seq=up_to_seq):
             state.turn = max(state.turn, event.turn)
             if event.type.value == "phase_change":
@@ -95,24 +126,44 @@ class EventStore:
                     state.private_role_id = None
                 if "act_id" in event.payload:
                     state.act_id = event.payload["act_id"]
-                    seat.search_points = event.payload.get("search_points_budget", search_budget)
+                    for seat in seats.values():
+                        seat.search_points = event.payload.get("search_points_budget", search_budget)
                     state.search_counts.clear()
                     state.private_chats_used = 0
             elif event.type.value == "clue_found":
                 clue_id = event.payload["clue_id"]
-                seat.search_points -= event.payload.get("search_cost", 0)
+                actor_seat = seats.get(event.actor_seat_id) or next(iter(seats.values()))
+                actor_seat.search_points -= event.payload.get("search_cost", 0)
                 location_id = event.payload["location_id"]
                 state.search_counts[location_id] = state.search_counts.get(location_id, 0) + 1
                 if event.visible_to == ["*"]:
                     state.public_clue_ids.append(clue_id)
                 else:
-                    seat.private_clue_ids.append(clue_id)
+                    for seat_id in event.visible_to:
+                        if seat_id in seats:
+                            seats[seat_id].private_clue_ids.append(clue_id)
             elif event.type.value == "vote":
                 state.vote_role_id = event.payload["role_id"]
                 state.vote_motive = event.payload["motive"]
                 state.vote_evidence_ids = event.payload["evidence_ids"]
-                seat.claims_made.append(event.payload["motive"])
+                if event.actor_seat_id in seats:
+                    seats[event.actor_seat_id].claims_made.append(event.payload["motive"])
         return state
+
+    def load_for_seat(self, game_id: str, seat_id: str, search_budget: int,
+                      up_to_seq: int | None = None) -> GameState:
+        state = self.load(game_id, search_budget, up_to_seq=up_to_seq)
+        if seat_id not in state.seats:
+            raise PermissionError("seat does not belong to this game")
+        own_votes = [event for event in self.events_for_seat(game_id, seat_id, up_to_seq)
+                     if event.type.value == "vote" and event.actor_seat_id == seat_id]
+        latest = own_votes[-1].payload if own_votes else {}
+        return state.model_copy(update={
+            "seats": {seat_id: state.seats[seat_id]},
+            "vote_role_id": latest.get("role_id"),
+            "vote_motive": latest.get("motive", ""),
+            "vote_evidence_ids": latest.get("evidence_ids", []),
+        })
 
     def trace(self, game_id: str, node: str, prompt_version: str, input_tokens: int,
               output_tokens: int, latency_ms: int, cost_usd: float | None = None) -> None:

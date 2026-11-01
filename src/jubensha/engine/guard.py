@@ -59,8 +59,26 @@ def check_npc_output(script: Script, perception: PerceptionView, response: str) 
 def semantic_leak_check(script: Script, response: str, store: EventStore, game_id: str) -> bool:
     if not configured():
         return True
-    surfaces = [{"fact": item.fact, "paraphrases": item.paraphrases,
-                 "implications": item.implications} for item in script.leak_surfaces.values()]
+    public_text = _plain(" ".join(
+        [act.public_narrative for act in script.acts]
+        + [character.public_profile for character in script.characters.values()]
+        + [location.description for location in script.locations.values()]))
+    public_bigrams = {public_text[index:index + 2] for index in range(len(public_text) - 1)}
+    candidate = _plain(response)
+    candidate_bigrams = {candidate[index:index + 2] for index in range(len(candidate) - 1)}
+    surfaces = []
+    for item in script.leak_surfaces.values():
+        phrases = [item.fact, *item.paraphrases, *item.implications]
+        distinctive = set()
+        for phrase in phrases:
+            normalized = _plain(phrase)
+            distinctive.update(normalized[index:index + 2] for index in range(len(normalized) - 1)
+                               if normalized[index:index + 2] not in public_bigrams)
+        if distinctive.intersection(candidate_bigrams):
+            surfaces.append({"fact": item.fact, "paraphrases": item.paraphrases,
+                             "implications": item.implications})
+    if not surfaces:
+        return True
     messages = [
         {"role": "system", "content": "判断候选台词是否直接、换词或暗示泄露任一禁止事实。只输出 PASS 或 BLOCK；不确定时输出 BLOCK。"},
         {"role": "user", "content": json.dumps({"forbidden": surfaces, "candidate": response}, ensure_ascii=False)},

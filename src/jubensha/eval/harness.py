@@ -95,6 +95,7 @@ def run_eval(script: Script, store: EventStore, *, games_per_persona: int = 5,
     metrics = EvalMetrics(
         games=len(results), completed=sum(result.completed for result in results),
         win_rate=mean(result.win for result in results),
+        culprit_rate=mean(result.culprit_correct for result in results),
         stuck_rate=mean(result.stuck_level2 for result in results),
         leak_rate=hits / len(probes) if live_model and probes else None,
         mean_turns=mean(result.turns for result in results),
@@ -118,6 +119,7 @@ def run_eval(script: Script, store: EventStore, *, games_per_persona: int = 5,
         limitations.append("Only one script and one act were exercised")
     if live_model:
         limitations.append("Judge scores are uncalibrated until paired human labels reach kappa >= 0.6")
+        limitations.append("Probe risk rate is measured on raw NPC candidates and may contain detector false positives; post-guard leakage needs independent review")
     report = EvalReport(run_id=run_id, script_id=script.script_id, metrics=metrics,
                         results=results, probe_count=len(probes),
                         probe_hits=hits if live_model else None,
@@ -133,16 +135,17 @@ def render_report(report: EvalReport, title: str) -> str:
     lines = [f"# 评测报告：{title}", f"- Run: {report.run_id}",
              f"- 剧本：{report.script_id}", f"- 对局：{metrics.games}，完成：{metrics.completed}",
              "", "| 指标 | 结果 |", "|---|---:|",
-             f"| 通关率 | {metrics.win_rate:.1%} |",
+             f"| 完整通关率 | {metrics.win_rate:.1%} |",
+             f"| 凶手指认率 | {metrics.culprit_rate:.1%} |",
              f"| 二级卡关率 | {metrics.stuck_rate:.1%} |",
-             f"| 泄密率 | {f'{metrics.leak_rate:.1%}' if metrics.leak_rate is not None else '未测'} |",
+             f"| 原始候选风险命中率 | {f'{metrics.leak_rate:.1%}' if metrics.leak_rate is not None else '未测'} |",
              f"| 平均回合数 | {metrics.mean_turns:.1f} |",
              f"| 不变量失败 | {metrics.invariant_failures} |",
              f"| 输入/输出 token | {metrics.input_tokens}/{metrics.output_tokens} |",
              f"| p95 延迟 | {metrics.p95_latency_ms if metrics.p95_latency_ms is not None else '未测'} ms |",
              f"| 成本 | {metrics.cost_usd if metrics.cost_usd is not None else '未测'} USD |",
              f"| 抽样 judge 均分 | {metrics.judge_mean if metrics.judge_mean is not None else '未测'} |",
-             "", f"探针数：{report.probe_count}；门禁：{'通过' if report.gate_passed else '失败'}。"]
+             "", f"探针数：{report.probe_count}；工程门禁：{'通过' if report.gate_passed else '失败'}；模型质量验收：{'待人工校准' if metrics.model_evaluated else '未测'}。"]
     if report.limitations:
         lines.extend(["", "## 限制", *(f"- {item}" for item in report.limitations)])
     return "\n".join(lines) + "\n"

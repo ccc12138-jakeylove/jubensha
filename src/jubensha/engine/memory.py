@@ -1,8 +1,14 @@
+from typing import Protocol
+
 from jubensha.engine.context import build_context, context_size
 from jubensha.engine.perception import PerceptionView
 from jubensha.schema.events import EventType, GameEvent
 from jubensha.schema.memory import MemorySummary
-from jubensha.storage.memory import SummaryStore
+
+
+class MemoryStore(Protocol):
+    def get(self, game_id: str, perspective: str, end_seq: int) -> MemorySummary | None: ...
+    def put(self, summary: MemorySummary) -> None: ...
 
 
 def visible_events(events: list[GameEvent], perspective: str) -> list[GameEvent]:
@@ -37,7 +43,7 @@ def summarize(game_id: str, perspective: str, events: list[GameEvent], end_seq: 
                          text="\n".join(lines)[-1200:])
 
 
-def summaries_for_context(store: SummaryStore, game_id: str, role_id: str,
+def summaries_for_context(store: MemoryStore, game_id: str, role_id: str,
                           events: list[GameEvent], perception: PerceptionView,
                           topic: str) -> tuple[MemorySummary | None, MemorySummary | None]:
     speech = [event for event in visible_events(events, role_id)

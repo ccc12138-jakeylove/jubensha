@@ -15,6 +15,15 @@ class EventType(str, Enum):
     CLAIM = "claim"
     VOTE = "vote"
 
+    @classmethod
+    def _missing_(cls, value):
+        if not isinstance(value, str) or not value:
+            return None
+        member = str.__new__(cls, value)
+        member._name_ = f"EXTENSION_{value.upper()}"
+        member._value_ = value
+        return member
+
 
 class GameEvent(BaseModel):
     model_config = ConfigDict(extra="forbid")

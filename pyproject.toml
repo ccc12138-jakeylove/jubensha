@@ -9,6 +9,9 @@ dependencies = [
     "litellm>=1.70,<2",
     "python-docx>=1.2.0",
     "pypdf>=6.21.4",
+    "fastapi>=0.162.0",
+    "uvicorn>=0.54.0",
+    "python-multipart>=0.0.33",
 ]
 
 [build-system]
@@ -19,7 +22,10 @@ build-backend = "hatchling.build"
 packages = ["src/jubensha"]
 
 [dependency-groups]
-dev = ["pytest>=8,<10"]
+dev = [
+    "httpx>=0.28.1",
+    "pytest>=8,<10",
+]
 
 [tool.pytest.ini_options]
 pythonpath = ["src"]

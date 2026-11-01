@@ -1,6 +1,6 @@
 import os
 
-from jubensha.engine.context import build_context
+from jubensha.engine.context import build_context, context_size
 from jubensha.engine.claims import ClaimJournal, normalize_probe
 from jubensha.engine.perception import PerceptionView
 from jubensha.llm.gateway import configured, generate
@@ -22,7 +22,10 @@ def respond(perception: PerceptionView, question: str,
             cue_probe = normalize_probe(cue["probe"])
             if cue_probe and (cue_probe in probe or probe in cue_probe):
                 return cue["answer"], True
-    mode = os.getenv("CONTEXT_MODE", "layered")
+    mode = os.getenv("CONTEXT_MODE", "auto")
+    if mode == "auto":
+        full = build_context(perception, question, events, mode="full")
+        mode = "layered" if context_size(full) > 3000 else "full"
     public_summary, role_summary = (summaries_for_context(SummaryStore(store), game_id,
                                                            perception.role_id, events,
                                                            perception, question)

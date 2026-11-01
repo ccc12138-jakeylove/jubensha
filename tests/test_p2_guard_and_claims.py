@@ -122,6 +122,9 @@ def test_semantic_gate_uses_gateway_result(script, tmp_path, monkeypatch):
         calls.append((node, version, messages[-1]["content"]))
         return "BLOCK"
     monkeypatch.setattr("jubensha.engine.guard.generate", gateway_stub)
-    assert not semantic_leak_check(script, "换种说法透露秘密", store, "g")
+    assert not semantic_leak_check(script, script.leak_surfaces["S02"].implications[0], store, "g")
     assert calls[0][:2] == ("guard_leak", "guard.leak.v1")
     assert "forbidden" in calls[0][2]
+    calls.clear()
+    assert semantic_leak_check(script, "外面还在下雨。", store, "g")
+    assert calls == []

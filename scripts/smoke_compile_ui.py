@@ -18,7 +18,7 @@ with sync_playwright() as p:
         "name": "wugang_ui_test.json", "mimeType": "application/json",
         "buffer": json.dumps(fixture, ensure_ascii=False).encode(),
     })
-    page.get_by_role("checkbox", name="我确认拥有此剧本的使用权或已获授权").check()
+    page.get_by_role("checkbox", name="我确认拥有此剧本的使用权或已获授权").check(force=True)
     page.get_by_role("button", name="编译并保存草稿").click()
     page.get_by_role("button", name="发布剧本").wait_for(timeout=15000)
     page.get_by_role("button", name="发布剧本").click()

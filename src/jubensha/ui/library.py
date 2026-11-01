@@ -16,6 +16,10 @@ def show_library(fixture: Script, events: EventStore, scripts: ScriptStore) -> N
     selected = st.selectbox("选择剧本", options,
                             format_func=lambda key: fixture.title if key == fixture.script_id else next(
                                 item["title"] for item in published if item["script_id"] == key))
+    if selected != fixture.script_id:
+        for _, item, _ in scripts.reviews(selected):
+            if item.conflict_type == "content_rating":
+                st.warning(item.message)
     if st.button("开局"):
         script = fixture if selected == fixture.script_id else scripts.load_published(selected)
         game_id = uuid4().hex

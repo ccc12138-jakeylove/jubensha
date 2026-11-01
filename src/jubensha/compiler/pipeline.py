@@ -6,6 +6,7 @@ from typing import Any
 from pydantic import BaseModel, ConfigDict, TypeAdapter, ValidationError
 
 from jubensha.compiler.ingest import DocumentSegment, read_document, segment_document
+from jubensha.compiler.content import content_tags
 from jubensha.compiler.lint import lint_script
 from jubensha.llm.gateway import configured, generate
 from jubensha.schema.ir import LeakSurfaceSet, Provenance, Script
@@ -109,6 +110,11 @@ def compile_document(filename: str, content: bytes, store: EventStore) -> Compil
     text = read_document(filename, content)
     segments = segment_document(filename, text)
     reviews: list[ReviewItem] = []
+    tags = content_tags(text)
+    if tags:
+        reviews.append(ReviewItem(field_path="content_rating", confidence=1,
+                                  conflict_type="content_rating",
+                                  message="内容提示：" + "、".join(tags), resolved=True))
     try:
         ir = json.loads(text)
         if not isinstance(ir, dict):

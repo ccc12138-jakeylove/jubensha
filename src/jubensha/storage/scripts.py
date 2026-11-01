@@ -4,6 +4,7 @@ from uuid import uuid4
 from jubensha.compiler.lint import lint_script
 from jubensha.compiler.pipeline import CompilationDraft, ReviewItem
 from jubensha.schema.ir import Script
+from jubensha.agents.referee import profile_for
 from jubensha.storage.events import EventStore
 
 
@@ -17,6 +18,10 @@ class ScriptStore:
                     source_filename TEXT NOT NULL, source_text TEXT NOT NULL, ir_json TEXT NOT NULL,
                     created_at TEXT DEFAULT CURRENT_TIMESTAMP
                 );
+                CREATE TABLE IF NOT EXISTS script_uploads (
+                    upload_id TEXT PRIMARY KEY, filename TEXT NOT NULL,
+                    content BLOB NOT NULL, created_at TEXT DEFAULT CURRENT_TIMESTAMP
+                );
                 CREATE TABLE IF NOT EXISTS script_versions (
                     script_id TEXT NOT NULL, version TEXT NOT NULL, ir_json TEXT NOT NULL,
                     created_at TEXT DEFAULT CURRENT_TIMESTAMP,
@@ -27,6 +32,29 @@ class ScriptStore:
                     item_json TEXT NOT NULL, resolved INTEGER NOT NULL DEFAULT 0
                 );
             """)
+
+    def register_fixture(self, script: Script) -> None:
+        with self.events.connect() as db:
+            db.execute("INSERT OR IGNORE INTO scripts (script_id,title,status,source_filename,source_text,ir_json) VALUES (?,?,?,?,?,?)",
+                       (script.script_id, script.title, "published", "builtin fixture", "",
+                        script.model_dump_json()))
+            db.execute("INSERT OR IGNORE INTO script_versions VALUES (?,?,?,CURRENT_TIMESTAMP)",
+                       (script.script_id, script.ir_version, script.model_dump_json()))
+
+    def save_upload(self, filename: str, content: bytes) -> str:
+        upload_id = uuid4().hex
+        with self.events.connect() as db:
+            db.execute("INSERT INTO script_uploads (upload_id,filename,content) VALUES (?,?,?)",
+                       (upload_id, filename, content))
+        return upload_id
+
+    def get_upload(self, upload_id: str) -> tuple[str, bytes]:
+        with self.events.connect() as db:
+            row = db.execute("SELECT filename,content FROM script_uploads WHERE upload_id=?",
+                             (upload_id,)).fetchone()
+        if row is None:
+            raise KeyError(upload_id)
+        return row["filename"], row["content"]
 
     def save_draft(self, draft: CompilationDraft) -> str:
         script_id = str(draft.ir.get("script_id") or f"draft_{uuid4().hex}")
@@ -93,6 +121,7 @@ class ScriptStore:
         if draft["status"] != "draft":
             raise ValueError("script is already published")
         script = Script.model_validate(draft["ir"])
+        profile_for(script)
         report = lint_script(script)
         if not report.passed:
             raise ValueError("linter blockers must be resolved")

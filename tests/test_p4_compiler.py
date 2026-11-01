@@ -72,6 +72,14 @@ def test_no_model_produces_reviewable_failure(tmp_path, monkeypatch):
     assert any(item.conflict_type == "missing_model" for item in result.review_items)
 
 
+def test_content_rating_is_visible_in_review(tmp_path, monkeypatch):
+    monkeypatch.setattr("jubensha.compiler.pipeline.configured", lambda: False)
+    result = compile_document("horror.txt", "旅馆里有血腥的尸块。".encode(),
+                              EventStore(tmp_path / "game.db"))
+    assert any(item.conflict_type == "content_rating" and "血腥" in item.message
+               for item in result.review_items)
+
+
 def test_publish_gate_requires_review_and_no_blockers(script, tmp_path):
     store = EventStore(tmp_path / "game.db")
     drafts = ScriptStore(store)

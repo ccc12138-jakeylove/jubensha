@@ -10,6 +10,7 @@ from jubensha.engine.loop import build_turn_graph, run_turn
 from jubensha.engine.search import available_clues
 from jubensha.engine.replay import reference_evidence, replay_at
 from jubensha.engine.world import TruthStore
+from jubensha.agents.referee import judge_submission
 from jubensha.schema.events import EventType
 from jubensha.schema.ir import Script
 from jubensha.storage.events import EventStore
@@ -27,6 +28,7 @@ def main():
     fixture = Script.model_validate(json.loads(fixture_path().read_text(encoding="utf-8")))
     store = EventStore(os.getenv("GAME_DB", "game.db"))
     scripts = ScriptStore(store)
+    scripts.register_fixture(fixture)
     view = st.query_params.get("view")
     if view == "library":
         show_library(fixture, store, scripts)
@@ -170,10 +172,14 @@ def main():
     elif state.phase in (Phase.RECAP, Phase.END):
         truth = TruthStore(script).recap()
         culprit_ids = {key for key, c in script.characters.items() if c.is_culprit}
+        judgment = judge_submission(script, state)
         st.subheader("玩家推理与真相")
         st.write(f"你的指认：{script.characters[state.vote_role_id].display_name if state.vote_role_id else '未提交'}")
         st.write(f"真实凶手：{'、'.join(truth['culprits'])}")
         st.write(f"凶手判断：{'正确' if state.vote_role_id in culprit_ids else '错误'}")
+        st.write(f"判分：{judgment.score:g}/{judgment.max_score:g}")
+        for key, correct in judgment.outcomes.items():
+            st.write(f"{key}：{'符合' if correct else '未符合'}")
         st.write(f"你的动机判断：{state.vote_motive or '未填写'}")
         st.write("你的证据：" + ("、".join(script.clues[c].display_name for c in state.vote_evidence_ids) or "未选择"))
         st.subheader("完整时间线")

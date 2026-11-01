@@ -43,8 +43,16 @@ def main():
             parser.error("LLM_MODEL is required with --generate")
         for mode, messages in contexts.items():
             started = time.perf_counter()
-            result[mode]["reply"] = generate(store, game_id, f"ab_{mode}", "npc.ab.v1", messages)
+            node = f"ab_{mode}"
+            result[mode]["reply"] = generate(store, game_id, node, "npc.ab.v1", messages)
             result[mode]["elapsed_ms"] = round((time.perf_counter() - started) * 1000)
+            with store.connect() as db:
+                trace = db.execute("SELECT input_tokens,output_tokens,cost_usd FROM llm_traces WHERE game_id=? AND node=? ORDER BY id DESC LIMIT 1",
+                                   (game_id, node)).fetchone()
+            if trace:
+                result[mode]["actual_input_tokens"] = trace["input_tokens"]
+                result[mode]["actual_output_tokens"] = trace["output_tokens"]
+                result[mode]["cost_usd"] = trace["cost_usd"]
     print(json.dumps(result, ensure_ascii=False, indent=2))
 
 

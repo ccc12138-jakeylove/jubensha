@@ -15,10 +15,11 @@ def generate(store: EventStore, game_id: str, node: str, prompt_version: str,
     model = os.environ["LLM_MODEL"]
     start = time.perf_counter()
     try:
+        options = {"extra_body": {"think": False}} if model.startswith(("ollama/", "ollama_chat/")) else {}
         response = completion(model=model, messages=messages,
                               api_key=os.getenv("LLM_API_KEY") or None,
                               api_base=os.getenv("LLM_BASE_URL") or None,
-                              max_tokens=max_tokens, temperature=0.3)
+                              max_tokens=max_tokens, temperature=0.3, **options)
         content = response.choices[0].message.content or ""
         usage = response.usage
         try:
