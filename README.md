@@ -32,6 +32,8 @@ P4 可在侧栏进入剧本库，上传 `.txt/.md/.docx/.pdf` 或完整 IR JSON�
 
 P5 公聊支持“面向全场”一次询问两位 NPC；导演只读取公开轨迹，安排 NPC 主动发言、公开线索反应及分级卡关提示。阶段和线索仍由代码裁定。
 
+P6 用 `uv run python scripts/run_evals.py --output docs/V1_EVAL_REPORT.md` 运行四策略各 5 局离线评测；配置模型后加 `--live-model`。评测页可查看运行与案例。人工标注至少 20 组 `human,model` CSV 后，用 `uv run python scripts/calibrate_judge.py labels.csv` 检查 κ 是否达到 0.6。
+
 ## 更换 fixture
 
 设置 `SCRIPT_FIXTURE` 为另一个符合 `Script` schema 的 JSON 文件路径，启动前先用 `Script.model_validate_json` 校验。引擎不读取固定剧本 ID 或固定地点 ID。

@@ -1,7 +1,7 @@
 import os
 import time
 
-from litellm import completion
+from litellm import completion, completion_cost
 
 from jubensha.storage.events import EventStore
 
@@ -21,9 +21,14 @@ def generate(store: EventStore, game_id: str, node: str, prompt_version: str,
                               max_tokens=max_tokens, temperature=0.3)
         content = response.choices[0].message.content or ""
         usage = response.usage
+        try:
+            cost_usd = completion_cost(completion_response=response)
+        except Exception:
+            cost_usd = None
         return content
     finally:
         elapsed = round((time.perf_counter() - start) * 1000)
         store.trace(game_id, node, prompt_version,
                     getattr(locals().get("usage"), "prompt_tokens", 0) or 0,
-                    getattr(locals().get("usage"), "completion_tokens", 0) or 0, elapsed)
+                    getattr(locals().get("usage"), "completion_tokens", 0) or 0,
+                    elapsed, locals().get("cost_usd"))

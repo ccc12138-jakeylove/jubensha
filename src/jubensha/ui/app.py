@@ -15,6 +15,7 @@ from jubensha.schema.ir import Script
 from jubensha.storage.events import EventStore
 from jubensha.storage.scripts import ScriptStore
 from jubensha.ui.library import show_library, show_review
+from jubensha.ui.evals import show_evals
 
 
 def fixture_path() -> Path:
@@ -33,11 +34,17 @@ def main():
     if view == "review":
         show_review(scripts, st.query_params.get("draft", ""))
         return
+    if view == "eval":
+        show_evals(fixture, store, scripts)
+        return
     game_id = st.query_params.get("game")
     if not game_id:
         game_id = store.latest_game()
     if st.sidebar.button("剧本库"):
         st.query_params["view"] = "library"
+        st.rerun()
+    if st.sidebar.button("评测"):
+        st.query_params["view"] = "eval"
         st.rerun()
     script_id = store.game_script_id(game_id) if game_id else fixture.script_id
     script = fixture if script_id == fixture.script_id else scripts.load_published(script_id)

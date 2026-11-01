@@ -28,9 +28,13 @@ class EventStore:
                     id INTEGER PRIMARY KEY AUTOINCREMENT, game_id TEXT NOT NULL,
                     node TEXT NOT NULL, prompt_version TEXT NOT NULL,
                     input_tokens INTEGER NOT NULL, output_tokens INTEGER NOT NULL,
-                    latency_ms INTEGER NOT NULL, created_at TEXT DEFAULT CURRENT_TIMESTAMP
+                    latency_ms INTEGER NOT NULL, cost_usd REAL,
+                    created_at TEXT DEFAULT CURRENT_TIMESTAMP
                 );
             """)
+            columns = {row[1] for row in db.execute("PRAGMA table_info(llm_traces)")}
+            if "cost_usd" not in columns:
+                db.execute("ALTER TABLE llm_traces ADD COLUMN cost_usd REAL")
 
     def connect(self):
         db = sqlite3.connect(self.path)
@@ -111,7 +115,7 @@ class EventStore:
         return state
 
     def trace(self, game_id: str, node: str, prompt_version: str, input_tokens: int,
-              output_tokens: int, latency_ms: int) -> None:
+              output_tokens: int, latency_ms: int, cost_usd: float | None = None) -> None:
         with self.connect() as db:
-            db.execute("INSERT INTO llm_traces (game_id,node,prompt_version,input_tokens,output_tokens,latency_ms) VALUES (?,?,?,?,?,?)",
-                       (game_id, node, prompt_version, input_tokens, output_tokens, latency_ms))
+            db.execute("INSERT INTO llm_traces (game_id,node,prompt_version,input_tokens,output_tokens,latency_ms,cost_usd) VALUES (?,?,?,?,?,?,?)",
+                       (game_id, node, prompt_version, input_tokens, output_tokens, latency_ms, cost_usd))

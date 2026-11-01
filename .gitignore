@@ -1,5 +1,6 @@
 .venv/
 .env
 *.db
+eval_report.md
 __pycache__/
 .pytest_cache/
