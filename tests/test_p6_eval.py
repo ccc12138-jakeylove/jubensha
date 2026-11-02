@@ -15,6 +15,8 @@ def test_four_personas_complete(script, tmp_path, monkeypatch):
     assert all(result.completed and not result.errors for result in results)
     assert all(not result.invariant_failures for result in results)
     assert all(result.proactive_count >= 2 for result in results)
+    assert all(result.judgment_outcomes for result in results)
+    assert all(result.attributions for result in results if not result.win)
 
 
 def test_invariant_gate_catches_duplicate_clue(script):

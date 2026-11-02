@@ -14,6 +14,15 @@ def lint_script(script: Script) -> LinterReport:
     event_ids = {event.event_id for event in script.truth_events}
     if not script.acts or len(acts) != len(script.acts) or len({act.order for act in script.acts}) != len(script.acts):
         issue("INVALID_ACT_ORDER", "blocker", script.script_id, "幕缺失或幕编号/顺序重复")
+    for act in script.acts:
+        if not {"read", "act_open", "vote"}.issubset({phase.value for phase in act.allowed_phases}):
+            issue("ACT_MISSING_REQUIRED_PHASE", "blocker", act.act_id,
+                  "幕缺少阅读、公聊或投票阶段")
+        thresholds = (act.director_proactive_after, act.director_hint_after,
+                      act.director_critical_after)
+        if all(value is not None for value in thresholds) and not thresholds[0] < thresholds[1] < thresholds[2]:
+            issue("INVALID_DIRECTOR_THRESHOLDS", "blocker", act.act_id,
+                  "导演阈值应按主动发言、提示、关键提示递增")
     if not script.characters or script.seat_range[0] < 1 or script.seat_range[0] > script.seat_range[1]:
         issue("INVALID_CAST", "blocker", script.script_id, "角色或席位范围无效")
     for key, character in script.characters.items():
@@ -115,6 +124,10 @@ def lint_script(script: Script) -> LinterReport:
             issue("UNEXPOSED_SECRET", "medium", secret.secret_id, "秘密没有直接暴露线索")
 
     culprits = {role_id for role_id, character in script.characters.items() if character.is_culprit}
+    if len(culprits) > 1 and script.win_condition.type in ("accuse", "vote"):
+        issue("MULTIPLE_CULPRITS", "blocker", script.script_id,
+              "单凶指认规则下有多个真凶，存在多解",
+              "明确唯一真凶，或改用支持多目标的胜利条件")
     culprit_events = {event.event_id for event in script.truth_events
                       if culprits.intersection(event.actor_ids)}
     evidence = [clue_id for clue_id in reachable
@@ -150,10 +163,26 @@ def lint_script(script: Script) -> LinterReport:
 
     candidate_paths = [prerequisite_path(clue_id) for clue_id in evidence]
     best_path = min(candidate_paths, key=lambda path: sum(script.clues[key].search_cost for key in path)) if candidate_paths else []
+    minimum_cost = sum(script.clues[key].search_cost for key in best_path) if best_path else None
+    if minimum_cost is not None and minimum_cost > total_budget:
+        issue("BUDGET_UNSOLVABLE", "blocker", script.script_id,
+              f"最短关键线索路径需 {minimum_cost} 点，预算仅 {total_budget} 点",
+              "增加搜证预算或降低关键线索成本")
+    red_herring_ratio = (sum(clue.red_herring for clue in script.clues.values()) / len(script.clues)
+                         if script.clues else 0.0)
+    if red_herring_ratio > 0.5:
+        issue("EXCESS_RED_HERRINGS", "medium", script.script_id,
+              "超过半数线索为红鲱鱼，可能淹没关键证据")
+    difficulty = min(5, max(1, 1 + len(script.clues) // 6 + len(script.acts) - 1
+                            + int(red_herring_ratio > 0.25)
+                            + int(any(clue.prerequisites for clue in script.clues.values()))))
     return LinterReport(
         passed=not blockers, blockers=blockers, warnings=warnings,
         solvability=SolvabilityResult(solvable=solvable,
                                       optimal_path_clue_ids=best_path,
                                       missing_evidence=[] if solvable else ["culprit_evidence"],
-                                      requires_human_review=True),
+                                      requires_human_review=True,
+                                      minimum_cost=minimum_cost, search_budget=total_budget,
+                                      alternative_culprits=sorted(culprits) if len(culprits) > 1 else []),
+        difficulty=difficulty, red_herring_ratio=red_herring_ratio,
     )

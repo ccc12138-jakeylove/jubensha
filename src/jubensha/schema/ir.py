@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from typing import Literal
+from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 from jubensha.engine.fsm import Phase
 
@@ -27,6 +27,9 @@ class Act(IRModel):
     entry_condition: str | None = None
     search_points_budget: int
     private_chat_budget: int = 2
+    director_proactive_after: int | None = Field(default=None, ge=1)
+    director_hint_after: int | None = Field(default=None, ge=1)
+    director_critical_after: int | None = Field(default=None, ge=1)
 
 
 class Character(IRModel):
@@ -131,6 +134,7 @@ class Provenance(IRModel):
     source_doc: str
     source_span: tuple[int, int]
     confidence: float
+    source_page: int | None = None
 
 
 class LintIssue(IRModel):
@@ -146,6 +150,9 @@ class SolvabilityResult(IRModel):
     optimal_path_clue_ids: list[str]
     missing_evidence: list[str]
     requires_human_review: bool = False
+    minimum_cost: int | None = None
+    search_budget: int = 0
+    alternative_culprits: list[str] = Field(default_factory=list)
 
 
 class LinterReport(IRModel):
@@ -153,13 +160,29 @@ class LinterReport(IRModel):
     blockers: list[LintIssue]
     warnings: list[LintIssue]
     solvability: SolvabilityResult
+    difficulty: int = 1
+    red_herring_ratio: float = 0.0
+
+
+class ParserMeta(IRModel):
+    source_files: list[str] = Field(default_factory=list)
+    segments: list[dict[str, Any]] = Field(default_factory=list)
+    field_confidence: dict[str, float] = Field(default_factory=dict)
+    reconcile_warnings: list[str] = Field(default_factory=list)
+
+
+class DirectorConfig(IRModel):
+    proactive_after: int = Field(default=8, ge=1)
+    hint_after: int = Field(default=12, ge=1)
+    critical_after: int = Field(default=16, ge=1)
+    max_proactive: int = Field(default=2, ge=0)
 
 
 class Script(IRModel):
     script_id: str
     title: str
     genre: Literal["本格", "变格", "机制", "恐怖", "情感"]
-    ir_version: str = "1.0"
+    ir_version: str = "1.1"
     tone: str
     seat_range: tuple[int, int]
     win_condition: WinCondition
@@ -174,3 +197,8 @@ class Script(IRModel):
     leak_surfaces: dict[str, LeakSurfaceSet]
     provenance: dict[str, Provenance]
     linter_report: LinterReport | None = None
+    difficulty: int | None = Field(default=None, ge=1, le=5)
+    content_rating: Literal["all", "12+", "16+", "18+"] | None = None
+    tags: list[str] = Field(default_factory=list)
+    parser_meta: ParserMeta | None = None
+    director_config: DirectorConfig | None = None

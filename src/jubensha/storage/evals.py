@@ -20,6 +20,12 @@ class EvalStore:
                     category TEXT NOT NULL, hit INTEGER NOT NULL,
                     PRIMARY KEY (run_id, case_id)
                 );
+                CREATE TABLE IF NOT EXISTS eval_attributions (
+                    run_id TEXT NOT NULL, game_id TEXT NOT NULL,
+                    category TEXT NOT NULL, detail TEXT NOT NULL,
+                    event_seq INTEGER,
+                    PRIMARY KEY (run_id, game_id, category)
+                );
             """)
             columns = {row[1] for row in db.execute("PRAGMA table_info(eval_runs)")}
             if "results_json" not in columns:
@@ -36,6 +42,11 @@ class EvalStore:
                 db.execute("INSERT INTO eval_cases VALUES (?,?,?,?,?,?)",
                            (run_id, case["case_id"], json.dumps(case["input"], ensure_ascii=False),
                             json.dumps(case["actual"], ensure_ascii=False), case["category"], int(case["hit"])))
+            for result in results or []:
+                for category in result.get("attributions", []):
+                    db.execute("INSERT OR IGNORE INTO eval_attributions (run_id,game_id,category,detail) VALUES (?,?,?,?)",
+                               (run_id, result["game_id"], category,
+                                json.dumps(result.get("judgment_outcomes", {}), ensure_ascii=False)))
 
     def list_runs(self, script_id: str | None = None) -> list[dict]:
         with self.events.connect() as db:

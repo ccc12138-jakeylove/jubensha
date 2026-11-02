@@ -93,6 +93,20 @@ def test_accusation_rubric_uses_acquired_evidence(script, state):
     assert not judge_submission(script, state).outcomes["motive"]
 
 
+def test_judge_uses_only_the_accusing_seat_evidence(script, tmp_path):
+    store = EventStore(tmp_path / "judge_seats.db")
+    store.create_game("g", script.script_id, script.acts[0].act_id)
+    store.add_seat("g", "seat_2")
+    state = store.load("g", script.acts[0].search_points_budget)
+    state.vote_role_id = "lin_suyun"
+    state.vote_motive = "欠条"
+    state.vote_evidence_ids = ["C04"]
+    state.seats["seat_2"].private_clue_ids.append("C04")
+    assert not judge_submission(script, state, seat_id="seat_1").outcomes["key_evidence"]
+    result = judge_submission(script, state, seat_id="seat_2")
+    assert result.outcomes["key_evidence"] and result.supporting_evidence_ids == ["C04"]
+
+
 def test_memory_store_hook_accepts_alternate_backend(script, state):
     class InMemorySummaries:
         def __init__(self):

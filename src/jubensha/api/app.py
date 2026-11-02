@@ -1,10 +1,18 @@
 import json
 import os
+import time
+from hashlib import sha256
+from concurrent.futures import ThreadPoolExecutor
+from contextlib import asynccontextmanager
+from queue import Queue
+from threading import Thread
 from pathlib import Path
 from uuid import uuid4
 
-from fastapi import FastAPI, File, Form, Header, HTTPException, UploadFile
-from fastapi.responses import StreamingResponse
+from fastapi import FastAPI, File, Form, Header, HTTPException, Request, UploadFile
+from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.exceptions import RequestValidationError
+from fastapi.encoders import jsonable_encoder
 from pydantic import BaseModel, Field
 
 from jubensha.agents.referee import judge_submission
@@ -15,7 +23,10 @@ from jubensha.engine.replay import replay_at
 from jubensha.engine.world import TruthStore
 from jubensha.eval.harness import run_eval
 from jubensha.schema.ir import Script
+from jubensha.services.compile_worker import drain_compile_jobs, drain_eval_jobs
 from jubensha.storage.events import EventStore
+from jubensha.storage.jobs import CompileJobs, EvalJobs
+from jubensha.storage.streams import TurnStreams
 from jubensha.storage.scripts import ScriptStore
 
 
@@ -44,12 +55,53 @@ class EvalRequest(BaseModel):
     live_model: bool = False
 
 
+class CompileJobRequest(BaseModel):
+    upload_id: str
+
+
 def create_app(db_path: str | None = None, fixture_path: str | None = None) -> FastAPI:
     fixture = Script.model_validate_json(Path(fixture_path or os.getenv("SCRIPT_FIXTURE", "fixtures/wugang_01.json")).read_text(encoding="utf-8"))
     events = EventStore(db_path or os.getenv("GAME_DB", "game.db"))
     scripts = ScriptStore(events)
+    jobs = CompileJobs(events)
+    eval_jobs = EvalJobs(events)
+    streams = TurnStreams(events)
     scripts.register_fixture(fixture)
-    api = FastAPI(title="剧本杀 V1")
+    worker = ThreadPoolExecutor(max_workers=1, thread_name_prefix="compile")
+    eval_worker = ThreadPoolExecutor(max_workers=1, thread_name_prefix="eval")
+
+    @asynccontextmanager
+    async def lifespan(_api: FastAPI):
+        worker.submit(drain_compile_jobs, events, jobs, scripts)
+        eval_worker.submit(drain_eval_jobs, events, eval_jobs, scripts, fixture)
+        yield
+        worker.shutdown(wait=False, cancel_futures=True)
+        eval_worker.shutdown(wait=False, cancel_futures=True)
+
+    api = FastAPI(title="剧本杀 V2", lifespan=lifespan)
+
+    @api.exception_handler(HTTPException)
+    async def http_error(request: Request, exc: HTTPException):
+        if not request.url.path.startswith("/api/v2/"):
+            return JSONResponse({"detail": exc.detail}, status_code=exc.status_code)
+        message = str(exc.detail)
+        code = ("SCRIPT_NOT_PUBLISHED" if "not published" in message or "not playable" in message
+                else "QUOTA_EXCEEDED" if exc.status_code == 429
+                else "LLM_UNAVAILABLE" if "LLM_MODEL" in message
+                else "VALIDATION_ERROR" if exc.status_code in (409, 422)
+                else "NOT_FOUND" if exc.status_code == 404 else "ACCESS_DENIED")
+        return JSONResponse({"error": {"code": code, "message": message,
+                                        "detail": {}, "request_id": uuid4().hex}},
+                            status_code=exc.status_code)
+
+    @api.exception_handler(RequestValidationError)
+    async def request_error(request: Request, exc: RequestValidationError):
+        detail = jsonable_encoder(exc.errors())
+        if not request.url.path.startswith("/api/v2/"):
+            return JSONResponse({"detail": detail}, status_code=422)
+        return JSONResponse({"error": {"code": "VALIDATION_ERROR", "message": "request validation failed",
+                                        "detail": {"fields": detail}, "request_id": uuid4().hex}},
+                            status_code=422)
 
     def require_token(authorization: str | None):
         token = os.getenv("API_TOKEN")
@@ -66,8 +118,9 @@ def create_app(db_path: str | None = None, fixture_path: str | None = None) -> F
 
     def game_script(game_id: str) -> Script:
         try:
-            return selected_script(events.game_script_id(game_id))
-        except KeyError as exc:
+            script_id = events.game_script_id(game_id)
+            return fixture if script_id == fixture.script_id else scripts.load_playable(script_id)
+        except (KeyError, ValueError) as exc:
             raise HTTPException(404, "game not found") from exc
 
     def seat_state(game_id: str, seat_id: str):
@@ -79,6 +132,8 @@ def create_app(db_path: str | None = None, fixture_path: str | None = None) -> F
 
     @api.post("/api/scripts")
     async def upload_script(file: UploadFile = File(...), authorized: bool = Form(...),
+                            rights_source: str = Form(default="author confirmed"),
+                            rights_contact: str = Form(default=""),
                             authorization: str | None = Header(default=None)):
         require_token(authorization)
         if not authorized:
@@ -86,7 +141,124 @@ def create_app(db_path: str | None = None, fixture_path: str | None = None) -> F
         content = await file.read()
         if len(content) > 10_000_000:
             raise HTTPException(413, "document exceeds 10 MB")
-        return {"upload_id": scripts.save_upload(file.filename or "upload.txt", content)}
+        try:
+            upload_id = scripts.save_upload(file.filename or "upload.txt", content,
+                                            rights_source, rights_contact)
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from exc
+        return {"upload_id": upload_id}
+
+    @api.post("/api/v2/scripts")
+    async def upload_script_v2(file: UploadFile = File(...), authorized: bool = Form(...),
+                               rights_source: str = Form(...),
+                               rights_contact: str = Form(default=""),
+                               authorization: str | None = Header(default=None)):
+        return await upload_script(file, authorized, rights_source, rights_contact, authorization)
+
+    @api.post("/api/v2/compile-jobs", status_code=202)
+    def create_compile_job(body: CompileJobRequest,
+                           idempotency_key: str | None = Header(default=None),
+                           authorization: str | None = Header(default=None)):
+        require_token(authorization)
+        try:
+            scripts.get_upload(body.upload_id)
+            job = jobs.create(body.upload_id, idempotency_key)
+        except KeyError as exc:
+            raise HTTPException(404, "upload not found") from exc
+        except ValueError as exc:
+            raise HTTPException(409, str(exc)) from exc
+        worker.submit(drain_compile_jobs, events, jobs, scripts)
+        return job
+
+    @api.get("/api/v2/compile-jobs/{job_id}")
+    def get_compile_job(job_id: str, authorization: str | None = Header(default=None)):
+        require_token(authorization)
+        try:
+            return jobs.get(job_id)
+        except KeyError as exc:
+            raise HTTPException(404, "job not found") from exc
+
+    @api.post("/api/v2/compile-jobs/{job_id}/retry", status_code=202)
+    def retry_compile_job(job_id: str, authorization: str | None = Header(default=None)):
+        require_token(authorization)
+        try:
+            job = jobs.retry(job_id)
+        except KeyError as exc:
+            raise HTTPException(404, "job not found") from exc
+        except ValueError as exc:
+            raise HTTPException(409, str(exc)) from exc
+        worker.submit(drain_compile_jobs, events, jobs, scripts)
+        return job
+
+    @api.post("/api/v2/eval-runs", status_code=202)
+    def create_eval_job(body: EvalRequest,
+                        idempotency_key: str | None = Header(default=None),
+                        authorization: str | None = Header(default=None)):
+        require_token(authorization)
+        script = selected_script(body.script_id)
+        try:
+            job = eval_jobs.create(script.script_id, body.games_per_persona,
+                                   body.live_model, idempotency_key)
+        except ValueError as exc:
+            raise HTTPException(409, str(exc)) from exc
+        eval_worker.submit(drain_eval_jobs, events, eval_jobs, scripts, fixture)
+        return job
+
+    @api.get("/api/v2/eval-runs/{job_id}")
+    def get_eval_job(job_id: str, authorization: str | None = Header(default=None)):
+        require_token(authorization)
+        try:
+            return eval_jobs.get(job_id)
+        except KeyError as exc:
+            raise HTTPException(404, "evaluation not found") from exc
+
+    @api.post("/api/v2/eval-runs/{job_id}/retry", status_code=202)
+    def retry_eval_job(job_id: str, authorization: str | None = Header(default=None)):
+        require_token(authorization)
+        try:
+            job = eval_jobs.retry(job_id)
+        except KeyError as exc:
+            raise HTTPException(404, "evaluation not found") from exc
+        except ValueError as exc:
+            raise HTTPException(409, str(exc)) from exc
+        eval_worker.submit(drain_eval_jobs, events, eval_jobs, scripts, fixture)
+        return job
+
+    @api.get("/api/v2/scripts")
+    def list_scripts_v2(status: str | None = None, genre: str | None = None,
+                        difficulty: int | None = None,
+                        authorization: str | None = Header(default=None)):
+        require_token(authorization)
+        return scripts.list_scripts(status=status, genre=genre, difficulty=difficulty)
+
+    @api.get("/api/v2/scripts/{script_id}/versions")
+    def script_versions_v2(script_id: str, authorization: str | None = Header(default=None)):
+        require_token(authorization)
+        try:
+            scripts.get_draft(script_id)
+        except KeyError as exc:
+            raise HTTPException(404, "script not found") from exc
+        return {"versions": scripts.versions(script_id), "revisions": scripts.revisions(script_id)}
+
+    @api.post("/api/v2/scripts/{script_id}/archive")
+    def archive_script_v2(script_id: str, authorization: str | None = Header(default=None)):
+        require_token(authorization)
+        try:
+            scripts.archive(script_id)
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from exc
+        return {"script_id": script_id, "status": "archived"}
+
+    @api.delete("/api/v2/scripts/{script_id}")
+    def delete_draft_v2(script_id: str, authorization: str | None = Header(default=None)):
+        require_token(authorization)
+        try:
+            scripts.delete_draft(script_id)
+        except KeyError as exc:
+            raise HTTPException(404, "script not found") from exc
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from exc
+        return {"script_id": script_id, "status": "deleted"}
 
     @api.post("/api/scripts/{upload_id}/compile")
     def compile_script(upload_id: str, authorization: str | None = Header(default=None)):
@@ -97,7 +269,7 @@ def create_app(db_path: str | None = None, fixture_path: str | None = None) -> F
             raise HTTPException(404, "upload not found") from exc
         try:
             draft = compile_document(filename, content, events)
-            script_id = scripts.save_draft(draft)
+            script_id = scripts.save_draft(draft, upload_id)
         except ValueError as exc:
             raise HTTPException(422, str(exc)) from exc
         return {"script_id": script_id, "valid": draft.valid,
@@ -148,12 +320,25 @@ def create_app(db_path: str | None = None, fixture_path: str | None = None) -> F
         return {"script_id": script.script_id, "status": "published"}
 
     @api.post("/api/games")
-    def create_game(body: GameCreate, authorization: str | None = Header(default=None)):
+    def create_game(body: GameCreate, authorization: str | None = Header(default=None),
+                    idempotency_key: str | None = Header(default=None)):
         require_token(authorization)
         script = selected_script(body.script_id)
-        game_id = uuid4().hex
-        events.create_game(game_id, script.script_id, script.acts[0].act_id)
+        if idempotency_key:
+            try:
+                game_id = events.create_game_idempotent(script.script_id, script.acts[0].act_id,
+                                                        idempotency_key)
+            except ValueError as exc:
+                raise HTTPException(409, str(exc)) from exc
+        else:
+            game_id = uuid4().hex
+            events.create_game(game_id, script.script_id, script.acts[0].act_id)
         return {"game_id": game_id, "script_id": script.script_id}
+
+    @api.post("/api/v2/games")
+    def create_game_v2(body: GameCreate, authorization: str | None = Header(default=None),
+                       idempotency_key: str | None = Header(default=None)):
+        return create_game(body, authorization, idempotency_key)
 
     @api.get("/api/games/{game_id}")
     def get_game(game_id: str, seat_id: str = "seat_1",
@@ -163,22 +348,102 @@ def create_app(db_path: str | None = None, fixture_path: str | None = None) -> F
 
     @api.post("/api/games/{game_id}/turns")
     def post_turn(game_id: str, body: TurnRequest, stream: bool = False,
-                  authorization: str | None = Header(default=None)):
+                  authorization: str | None = Header(default=None),
+                  idempotency_key: str | None = Header(default=None),
+                  last_event_id: str | None = Header(default=None)):
         require_token(authorization)
         script = game_script(game_id)
         seat_state(game_id, body.seat_id)
         data = body.model_dump(exclude_none=True, exclude={"seat_id"})
         data.update(game_id=game_id, actor_seat_id=body.seat_id)
+        if stream and idempotency_key:
+            try:
+                cursor = int(last_event_id or "0")
+                if cursor < 0:
+                    raise ValueError("negative event id")
+            except ValueError as exc:
+                raise HTTPException(422, "Last-Event-ID must be a nonnegative integer") from exc
+            request_hash = sha256(body.model_dump_json().encode("utf-8")).hexdigest()
+            try:
+                fresh = streams.begin(game_id, idempotency_key, body.seat_id, request_hash)
+            except ValueError as exc:
+                raise HTTPException(409, str(exc)) from exc
+            if fresh:
+                def run_persisted():
+                    def observer(kind: str, node: str):
+                        streams.append(game_id, idempotency_key, kind, {"node": node})
+                    try:
+                        result = run_turn(build_turn_graph(script, events, observer), events,
+                                          script, data)
+                        reply = result.get("reply", "")
+                        for start in range(0, len(reply), 32):
+                            streams.append(game_id, idempotency_key, "token",
+                                           {"text": reply[start:start + 32]})
+                        streams.append(game_id, idempotency_key, "done",
+                                       {"reply": reply,
+                                        "state": seat_state(game_id, body.seat_id).model_dump(mode="json")})
+                    except Exception as exc:
+                        streams.append(game_id, idempotency_key, "error",
+                                       {"code": "VALIDATION_ERROR", "message": str(exc)})
+                Thread(target=run_persisted, daemon=True).start()
+            def stream_persisted():
+                seen = cursor
+                while True:
+                    updates = streams.after(game_id, idempotency_key, seen)
+                    for item in updates:
+                        seen = item["seq"]
+                        yield f"id: {seen}\nevent: {item['kind']}\ndata: {json.dumps(item['payload'], ensure_ascii=False)}\n\n"
+                        if item["kind"] in ("done", "error"):
+                            return
+                    status = streams.status(game_id, idempotency_key)
+                    if status == "interrupted":
+                        yield f"event: error\ndata: {json.dumps({'code': 'INTERRUPTED', 'message': 'turn was interrupted'})}\n\n"
+                        return
+                    if status in ("completed", "failed"):
+                        return
+                    time.sleep(0.1)
+            return StreamingResponse(stream_persisted(), media_type="text/event-stream")
+        if stream:
+            def stream_events():
+                queue: Queue[tuple[str, dict]] = Queue()
+                def observer(kind: str, node: str):
+                    queue.put((kind, {"node": node}))
+                def run():
+                    try:
+                        result = run_turn(build_turn_graph(script, events, observer), events,
+                                          script, data)
+                        reply = result.get("reply", "")
+                        for start in range(0, len(reply), 32):
+                            queue.put(("token", {"text": reply[start:start + 32]}))
+                        queue.put(("done", {"reply": reply,
+                                            "state": seat_state(game_id, body.seat_id).model_dump(mode="json")}))
+                    except Exception as exc:
+                        queue.put(("error", {"code": "VALIDATION_ERROR", "message": str(exc)}))
+                Thread(target=run, daemon=True).start()
+                sequence = 0
+                while True:
+                    kind, payload = queue.get()
+                    sequence += 1
+                    yield f"id: {sequence}\nevent: {kind}\ndata: {json.dumps(payload, ensure_ascii=False)}\n\n"
+                    if kind in ("done", "error"):
+                        break
+            return StreamingResponse(stream_events(), media_type="text/event-stream")
         try:
             result = run_turn(build_turn_graph(script, events), events, script, data)
         except (ValueError, KeyError, PermissionError) as exc:
             raise HTTPException(422, str(exc)) from exc
         payload = {"reply": result.get("reply", ""),
                    "state": seat_state(game_id, body.seat_id).model_dump(mode="json")}
-        if stream:
-            return StreamingResponse(iter([f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"]),
-                                     media_type="text/event-stream")
         return payload
+
+    @api.post("/api/v2/games/{game_id}/turns")
+    def post_turn_v2(game_id: str, body: TurnRequest, stream: bool = False,
+                     authorization: str | None = Header(default=None),
+                     idempotency_key: str | None = Header(default=None),
+                     last_event_id: str | None = Header(default=None)):
+        if stream and not idempotency_key:
+            raise HTTPException(422, "Idempotency-Key is required for resumable stream")
+        return post_turn(game_id, body, stream, authorization, idempotency_key, last_event_id)
 
     @api.get("/api/games/{game_id}/clues")
     def get_clues(game_id: str, seat_id: str = "seat_1",
@@ -202,7 +467,8 @@ def create_app(db_path: str | None = None, fixture_path: str | None = None) -> F
 
     @api.get("/api/games/{game_id}/replay")
     def get_replay(game_id: str, seq: int | None = None, seat_id: str = "seat_1",
-                   perspective: str | None = None, authorization: str | None = Header(default=None)):
+                   perspective: str | None = None, authorization: str | None = Header(default=None),
+                   x_author_token: str | None = Header(default=None)):
         require_token(authorization)
         script = game_script(game_id)
         current = seat_state(game_id, seat_id)
@@ -210,9 +476,15 @@ def create_app(db_path: str | None = None, fixture_path: str | None = None) -> F
             raise HTTPException(403, "replay unlocks after recap")
         last_seq = len(events.events(game_id))
         point = last_seq if seq is None else max(0, min(seq, last_seq))
+        selected = perspective or seat_id
+        if selected != seat_id:
+            expected = os.getenv("AUTHOR_TOKEN")
+            if not expected or x_author_token != expected:
+                raise HTTPException(403, "author perspective requires author token")
+            scripts.audit("author", "replay_perspective", game_id, f"{selected}@{point}")
         try:
             _, visible, perception = replay_at(script, events, game_id, point,
-                                               perspective or seat_id)
+                                               selected)
         except ValueError as exc:
             raise HTTPException(422, str(exc)) from exc
         historic_seat = events.load_for_seat(game_id, seat_id, script.acts[0].search_points_budget,

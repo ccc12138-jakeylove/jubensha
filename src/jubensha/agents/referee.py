@@ -1,6 +1,6 @@
 import re
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 from jubensha.schema.genre import GenreProfile, RubricItem
 from jubensha.schema.ir import Script
@@ -14,6 +14,8 @@ class Judgment(BaseModel):
     max_score: float
     passed: bool
     partial_credit: bool
+    reasons: dict[str, str] = Field(default_factory=dict)
+    supporting_evidence_ids: list[str] = Field(default_factory=list)
 
 
 def profile_for(script: Script) -> GenreProfile:
@@ -35,13 +37,19 @@ def text_terms(text: str) -> set[str]:
 
 
 def judge_submission(script: Script, state: GameState,
-                     profile: GenreProfile | None = None) -> Judgment:
+                     profile: GenreProfile | None = None,
+                     seat_id: str | None = None) -> Judgment:
     profile = profile or profile_for(script)
     culprits = {key for key, character in script.characters.items() if character.is_culprit}
     evidence = set(state.vote_evidence_ids)
     owned = set(state.public_clue_ids)
-    for seat in state.seats.values():
-        owned.update(seat.private_clue_ids)
+    if seat_id is None:
+        if len(state.seats) != 1:
+            raise ValueError("seat_id is required when judging a multi-seat game")
+        seat_id = next(iter(state.seats))
+    if seat_id not in state.seats:
+        raise PermissionError("seat does not belong to this game")
+    owned.update(state.seats[seat_id].private_clue_ids)
     culprit_events = {event.event_id for event in script.truth_events
                       if culprits.intersection(event.actor_ids)}
     culprit_secrets = {key for key, secret in script.secrets.items()
@@ -55,14 +63,21 @@ def judge_submission(script: Script, state: GameState,
     evidence_terms = text_terms(" ".join(script.clues[key].surface_text for key in evidence
                                       if key in owned and key in script.clues))
     motive_evidence = (motive_terms - public_terms).intersection(evidence_terms)
+    supporting = [clue_id for clue_id in evidence
+                  if clue_id in owned and clue_id in script.clues
+                  and (set(script.clues[clue_id].reveals_event_ids).intersection(culprit_events)
+                       or set(script.clues[clue_id].reveals_secret_ids).intersection(culprit_secrets))]
     outcomes = {
         "culprit": state.vote_role_id in culprits,
         "motive": bool(player_terms.intersection(motive_evidence)),
-        "key_evidence": any(
-            clue_id in owned and clue_id in script.clues
-            and (set(script.clues[clue_id].reveals_event_ids).intersection(culprit_events)
-                 or set(script.clues[clue_id].reveals_secret_ids).intersection(culprit_secrets))
-            for clue_id in evidence),
+        "key_evidence": bool(supporting),
+    }
+    reasons = {
+        "culprit": "指认与真凶一致" if outcomes["culprit"] else "指认对象与真凶不一致",
+        "motive": "动机与已获得的证据及真凶目标相关" if outcomes["motive"]
+                  else "动机缺少已获得证据支持，或与真凶目标不符",
+        "key_evidence": "提交了已获得且指向真凶的证据" if supporting
+                        else "未提交已获得且指向真凶的关键证据",
     }
     required = profile.win_condition.required
     weights = {item.key: item.weight for item in profile.rubric}
@@ -71,4 +86,6 @@ def judge_submission(script: Script, state: GameState,
     return Judgment(outcomes={key: outcomes.get(key, False) for key in required},
                     score=score, max_score=max_score,
                     passed=all(outcomes.get(key, False) for key in required),
-                    partial_credit=profile.win_condition.partial_credit and 0 < score < max_score)
+                    partial_credit=profile.win_condition.partial_credit and 0 < score < max_score,
+                    reasons={key: reasons.get(key, "需由该类型裁判说明") for key in required},
+                    supporting_evidence_ids=sorted(supporting))

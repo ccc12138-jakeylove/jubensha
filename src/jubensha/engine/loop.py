@@ -43,7 +43,7 @@ class TurnState(TypedDict, total=False):
     actor_seat_id: str
 
 
-def build_turn_graph(script: Script, store: EventStore):
+def build_turn_graph(script: Script, store: EventStore, observer=None):
     ordered_acts = sorted(script.acts, key=lambda act: act.order)
 
     def current_act(state):
@@ -75,6 +75,22 @@ def build_turn_graph(script: Script, store: EventStore):
         if action not in valid or state.phase not in valid[action]:
             raise ValueError(f"action {action} is unavailable in {state.phase.value}")
         act = current_act(state)
+        phase_for_action = {
+            "begin": Phase.READ,
+            "read_done": Phase.ACT_OPEN, "talk": Phase.ACT_OPEN,
+            "leave_search": Phase.ACT_OPEN,
+            "enter_search": Phase.SEARCH, "search": Phase.SEARCH,
+            "leave_private": Phase.ACT_OPEN,
+            "enter_private": Phase.PRIVATE, "private_talk": Phase.PRIVATE,
+            "leave_confront": Phase.ACT_OPEN,
+            "enter_confront": Phase.CONFRONT, "confront_talk": Phase.CONFRONT,
+            "vote": Phase.VOTE,
+        }.get(action)
+        if phase_for_action is not None and phase_for_action not in act.allowed_phases:
+            raise ValueError(f"本幕不允许 {phase_for_action.value} 阶段")
+        if (action == "next_act" and act != ordered_acts[-1]
+                and Phase.READ not in ordered_acts[ordered_acts.index(act) + 1].allowed_phases):
+            raise ValueError("下一幕不允许 read 阶段")
         if action == "enter_private" and Phase.PRIVATE not in act.allowed_phases:
             raise ValueError("本幕不可私聊")
         if action == "enter_private" and state.private_chats_used >= act.private_chat_budget:
@@ -202,10 +218,16 @@ def build_turn_graph(script: Script, store: EventStore):
             return data
         state = store.load(data["game_id"], script.acts[0].search_points_budget)
         history = store.events(data["game_id"])
+        act = current_act(state)
+        config = script.director_config
         decision = decide(state.phase, history,
                           {role_id: character.public_profile for role_id, character in script.characters.items()},
                           data["text"], {item["role_id"] for item in data.get("npc_outputs", [])},
-                          {clue_id: script.clues[clue_id].surface_text for clue_id in state.public_clue_ids})
+                          {clue_id: script.clues[clue_id].surface_text for clue_id in state.public_clue_ids},
+                          proactive_after=act.director_proactive_after or (config.proactive_after if config else 8),
+                          hint_after=act.director_hint_after or (config.hint_after if config else 12),
+                          critical_after=act.director_critical_after or (config.critical_after if config else 16),
+                          max_proactive=config.max_proactive if config else 2)
         if decision.action == "hint" and decision.level >= 2:
             visited = {event.payload.get("location_id") for event in history
                        if event.type == EventType.CLUE_FOUND and "*" in event.visible_to}
@@ -307,13 +329,22 @@ def build_turn_graph(script: Script, store: EventStore):
         return data
 
     graph = StateGraph(TurnState)
+    def observed(name, func):
+        if observer is None:
+            return func
+        def run(data):
+            observer("node_start", name)
+            result = func(data)
+            observer("node_end", name)
+            return result
+        return run
     for name, func in (("ingest_turn", ingest_turn), ("router", router),
                        ("guardrail_in", guardrail_in),
                        ("npc_dispatch", npc_dispatch), ("search_evidence", search_evidence),
                        ("dm_narrate", dm_narrate), ("leak_check", leak_check),
                        ("director_check", director_check), ("memory_write", memory_write),
                        ("phase_check", phase_check)):
-        graph.add_node(name, func)
+        graph.add_node(name, observed(name, func))
     graph.add_edge(START, "ingest_turn")
     graph.add_edge("ingest_turn", "router")
     graph.add_conditional_edges("router", lambda d: d["route"],

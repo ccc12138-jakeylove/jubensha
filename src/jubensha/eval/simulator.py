@@ -3,7 +3,7 @@ import re
 from typing import Literal
 from uuid import uuid4
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 from jubensha.engine.fsm import Phase
 from jubensha.agents.referee import judge_submission, text_terms
@@ -33,6 +33,8 @@ class SimResult(BaseModel):
     stuck_level2: bool
     invariant_failures: list[str]
     errors: list[str]
+    judgment_outcomes: dict[str, bool] = Field(default_factory=dict)
+    attributions: list[str] = Field(default_factory=list)
 
 
 def _model_json(store: EventStore, game_id: str, node: str, persona: Persona,
@@ -208,6 +210,19 @@ def simulate_game(script: Script, store: EventStore, persona: Persona,
     state = store.load(game_id, first_act.search_points_budget)
     culprit_correct = bool(state.vote_role_id and script.characters[state.vote_role_id].is_culprit)
     judgment = judge_submission(script, state)
+    attributions = []
+    if errors:
+        attributions.append("model_or_engine_error")
+    if state.phase != Phase.END:
+        attributions.append("incomplete")
+    if not judgment.passed:
+        attributions.extend(f"judge_{key}" for key, passed in judgment.outcomes.items() if not passed)
+    if any(event.type == EventType.DM_NARRATION
+           and event.payload.get("director_level", 0) >= 2 for event in events):
+        attributions.append("stalled")
+    invariant_failures = check_invariants(script, events)
+    if invariant_failures:
+        attributions.append("invariant")
     return SimResult(
         game_id=game_id, persona=persona, completed=state.phase == Phase.END,
         win=judgment.passed, culprit_correct=culprit_correct,
@@ -217,5 +232,6 @@ def simulate_game(script: Script, store: EventStore, persona: Persona,
                             for event in events),
         stuck_level2=any(event.type == EventType.DM_NARRATION
                          and event.payload.get("director_level", 0) >= 2 for event in events),
-        invariant_failures=check_invariants(script, events), errors=errors,
+        invariant_failures=invariant_failures, errors=errors,
+        judgment_outcomes=judgment.outcomes, attributions=attributions,
     )

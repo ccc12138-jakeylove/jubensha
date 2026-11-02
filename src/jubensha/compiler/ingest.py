@@ -1,5 +1,6 @@
 import io
 import re
+from bisect import bisect_right
 from pathlib import Path
 
 from docx import Document
@@ -16,6 +17,7 @@ class DocumentSegment(BaseModel):
     kind: str
     text: str
     source_span: tuple[int, int]
+    page_number: int | None = None
 
 
 def read_document(filename: str, content: bytes) -> str:
@@ -35,12 +37,13 @@ def read_document(filename: str, content: bytes) -> str:
                 lines.extend(" | ".join(cell.text for cell in row.cells) for row in block.rows)
         return "\n".join(lines)
     if suffix == ".pdf":
-        return "\n".join(page.extract_text(extraction_mode="layout") or ""
-                         for page in PdfReader(io.BytesIO(content)).pages)
+        return "\n".join(f"# Page {index}\n{page.extract_text(extraction_mode='layout') or ''}"
+                         for index, page in enumerate(PdfReader(io.BytesIO(content)).pages, 1))
     raise ValueError(f"unsupported document type: {suffix}")
 
 
 def segment_document(filename: str, text: str, max_chars: int = 4000) -> list[DocumentSegment]:
+    page_starts = [match.start() for match in re.finditer(r"(?m)^# Page \d+\s*$", text)]
     headings = list(re.finditer(
         r"(?m)^(?:#{1,6}\s+|第[一二三四五六七八九十\d]+[幕章][^\n]*|(?:主持人手册|角色本|线索表|流程说明|时间线|人物关系)[:：][^\n]*)",
         text))
@@ -56,6 +59,8 @@ def segment_document(filename: str, text: str, max_chars: int = 4000) -> list[Do
                 else "flow" if "幕" in title or "流程" in title else "general")
         for offset in range(0, len(block), max_chars):
             part = block[offset:offset + max_chars]
+            page_number = bisect_right(page_starts, start + offset) if page_starts else None
             segments.append(DocumentSegment(source_doc=filename, title=title, kind=kind,
-                                            text=part, source_span=(start + offset, start + offset + len(part))))
+                                            text=part, source_span=(start + offset, start + offset + len(part)),
+                                            page_number=page_number))
     return segments

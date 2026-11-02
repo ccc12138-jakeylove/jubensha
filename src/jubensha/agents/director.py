@@ -15,7 +15,9 @@ class DirectorDecision(BaseModel):
 
 def decide(phase: Phase, events: list[GameEvent], public_profiles: dict[str, str],
            topic: str = "", exclude_roles: set[str] | None = None,
-           discovered_clues: dict[str, str] | None = None) -> DirectorDecision:
+           discovered_clues: dict[str, str] | None = None,
+           proactive_after: int = 8, hint_after: int = 12,
+           critical_after: int = 16, max_proactive: int = 2) -> DirectorDecision:
     if phase != Phase.ACT_OPEN:
         return DirectorDecision(action="none", reason="not public discussion")
     public = [event for event in events if "*" in event.visible_to]
@@ -42,20 +44,20 @@ def decide(phase: Phase, events: list[GameEvent], public_profiles: dict[str, str
     candidates = [role_id for role_id in public_profiles
                   if role_id not in {event.payload.get("role_id") for event in proactive}
                   and role_id not in (exclude_roles or set())]
-    if idle_turns >= 16:
+    if idle_turns >= critical_after:
         return DirectorDecision(action="hint", reason="prolonged stall", level=3)
-    if idle_turns >= 12:
+    if idle_turns >= hint_after:
         return DirectorDecision(action="hint", reason="stalled discussion", level=2)
-    if idle_turns >= 8:
+    if idle_turns >= proactive_after:
         return DirectorDecision(action="proactive" if candidates else "hint",
-                                reason="no progress for eight turns",
+                                reason="no progress in current act",
                                 target=candidates[0] if candidates else None, level=1)
     reacted_clues = {event.payload.get("trigger_clue_id") for event in proactive}
     fresh = [event.payload["clue_id"] for event in current
              if event.type == EventType.CLUE_FOUND
              and event.payload.get("clue_id") in (discovered_clues or {})
              and event.payload.get("clue_id") not in reacted_clues]
-    if fresh:
+    if fresh and len(proactive) < max_proactive:
         clue_id = fresh[-1]
         available = [role_id for role_id in public_profiles if role_id not in (exclude_roles or set())]
         if available:
@@ -64,7 +66,7 @@ def decide(phase: Phase, events: list[GameEvent], public_profiles: dict[str, str
                                                     for char in clue_chars), reverse=True)
             return DirectorDecision(action="proactive", reason="react to public clue",
                                     target=available[0], trigger_clue_id=clue_id)
-    if len(proactive) < 2 and candidates and (last_turn >= 1 or len(asked) >= 1):
+    if len(proactive) < max_proactive and candidates and (last_turn >= 1 or len(asked) >= 1):
         topic_chars = set(topic)
         candidates.sort(key=lambda role_id: (sum(char in public_profiles[role_id] for char in topic_chars),
                                              -asked[-3:].count(role_id)), reverse=True)

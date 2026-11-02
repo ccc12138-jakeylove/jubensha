@@ -1,6 +1,6 @@
-# 通用型剧本杀 AI Agent · P0
+# 通用型剧本杀 AI Agent
 
-单幕 fixture 驱动的 Streamlit 对局。Python 3.11+，使用 uv。
+单机剧本杀引擎与作者工作台。当前开发分支为 V2.0-beta；正式验收缺口见 [V2 状态](docs/V2_STATUS.md)。Python 3.11+，使用 uv。
 
 ## 安装
 
@@ -21,6 +21,8 @@ Copy-Item .env.example .env
 ```powershell
 uv run streamlit run src/jubensha/ui/app.py
 ```
+
+V2 预览可单独设置 `GAME_DB=game_v2.db`，避免与固定 V1 服务共用数据。V2 API 使用 `uv run uvicorn jubensha.api.app:app --host 127.0.0.1 --port 8001`；`/api/v2/compile-jobs` 与 `/api/v2/eval-runs` 提交后台任务，轮询对应 ID。`AUTHOR_TOKEN` 控制角色认知回放视角。`LLM_MODEL_COMPILER`、`LLM_MODEL_NPC`、`LLM_MODEL_JUDGE`、`LLM_MODEL_GUARD` 可分别路由模型；`LLM_MODEL_STRONG` 只用于编译末次修复。三本完整授权 IR 准备好后，运行 `uv run python scripts/eval_gate.py fixture1.json fixture2.json fixture3.json` 做模型回归；该命令不能替代人工标注验收。
 
 `uv run pytest` 运行测试。对局事件和 LangGraph 节点快照保存到当前目录的 `game.db`，URL 中的 `game` 参数用于续局。搜证按线索成本扣点，地点容量和前置线索由代码校验；每幕可用点数和私聊次数由 fixture 决定。
 

@@ -3,7 +3,9 @@ from uuid import uuid4
 from difflib import SequenceMatcher
 import re
 import os
+import subprocess
 from hashlib import sha256
+from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict
 
@@ -35,6 +37,8 @@ class EvalReport(BaseModel):
     model_name: str
     temperature: float
     ir_sha256: str
+    git_sha: str = ""
+    prompt_hash: str = ""
 
 
 def _probe_hit(forbidden_surfaces: list[str], reply: str) -> bool:
@@ -50,6 +54,17 @@ def _probe_hit(forbidden_surfaces: list[str], reply: str) -> bool:
             for start in range(len(answer) - len(phrase) + 1)):
             return True
     return False
+
+
+def _prompt_code_hash() -> str:
+    root = Path(__file__).resolve().parents[1]
+    files = ("agents/npc.py", "agents/judge.py", "engine/guard.py",
+             "compiler/pipeline.py", "eval/simulator.py")
+    digest = sha256()
+    for name in files:
+        digest.update(name.encode())
+        digest.update((root / name).read_bytes())
+    return digest.hexdigest()
 
 
 def run_eval(script: Script, store: EventStore, *, games_per_persona: int = 5,
@@ -176,12 +191,17 @@ def run_eval(script: Script, store: EventStore, *, games_per_persona: int = 5,
                         gate_passed=gate_passed, limitations=limitations,
                         model_name=os.getenv("LLM_MODEL", "offline"),
                         temperature=float(os.getenv("LLM_TEMPERATURE", "0.3")),
-                        ir_sha256=sha256(script.model_dump_json().encode("utf-8")).hexdigest())
+                        ir_sha256=sha256(script.model_dump_json().encode("utf-8")).hexdigest(),
+                        git_sha=subprocess.run(["git", "rev-parse", "HEAD"], capture_output=True,
+                                               text=True, check=False).stdout.strip(),
+                        prompt_hash=_prompt_code_hash())
     EvalStore(store).save_run(run_id, script.script_id,
                               {"games_per_persona": games_per_persona, "live_model": live_model,
                                "model_name": report.model_name,
                                "temperature": report.temperature,
-                               "ir_sha256": report.ir_sha256},
+                               "ir_sha256": report.ir_sha256,
+                               "git_sha": report.git_sha,
+                               "prompt_hash": report.prompt_hash},
                               metrics.model_dump(), "passed" if gate_passed else "failed", cases,
                               [result.model_dump() for result in results])
     return report
@@ -193,6 +213,8 @@ def render_report(report: EvalReport, title: str) -> str:
              f"- 剧本：{report.script_id}", f"- 对局：{metrics.games}，完成：{metrics.completed}",
              f"- 模型：{report.model_name}，temperature={report.temperature:g}",
              f"- IR SHA256：{report.ir_sha256}",
+             f"- Git SHA：{report.git_sha or '未知'}",
+             f"- Prompt 代码 SHA256：{report.prompt_hash}",
              "", "| 指标 | 结果 |", "|---|---:|",
              f"| 完整通关率 | {metrics.win_rate:.1%} |",
              f"| 正常策略通关率（不含元攻击） | {metrics.normal_win_rate:.1%} |",

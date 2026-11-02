@@ -8,6 +8,7 @@ import streamlit as st
 from jubensha.engine.fsm import Phase
 from jubensha.engine.loop import build_turn_graph, run_turn
 from jubensha.engine.search import available_clues
+from jubensha.engine.seats import current_seat
 from jubensha.engine.replay import reference_evidence, replay_at
 from jubensha.engine.world import TruthStore
 from jubensha.agents.referee import judge_submission
@@ -49,7 +50,7 @@ def main():
         st.query_params["view"] = "eval"
         st.rerun()
     script_id = store.game_script_id(game_id) if game_id else fixture.script_id
-    script = fixture if script_id == fixture.script_id else scripts.load_published(script_id)
+    script = fixture if script_id == fixture.script_id else scripts.load_playable(script_id)
     st.title(script.title)
     if not game_id:
         if st.button("开局"):
@@ -58,22 +59,25 @@ def main():
             st.query_params["game"] = game_id
             st.rerun()
         return
+    seat_id = "seat_1"
     try:
-        state = store.load(game_id, script.acts[0].search_points_budget)
-    except KeyError:
+        state = store.load_for_seat(game_id, seat_id, script.acts[0].search_points_budget)
+    except (KeyError, PermissionError):
         st.error("对局不存在")
         return
+    seat = current_seat(state, seat_id)
     graph = build_turn_graph(script, store)
 
     def play(action: str, **kwargs):
         try:
-            run_turn(graph, store, script, {"game_id": game_id, "action": action, **kwargs})
+            run_turn(graph, store, script, {"game_id": game_id, "action": action,
+                                            "actor_seat_id": seat_id, **kwargs})
             st.rerun()
         except Exception as exc:
             st.error(str(exc))
 
     def dialogue(phase: Phase):
-        for event in store.events(game_id):
+        for event in store.events_for_seat(game_id, seat_id):
             if event.phase != phase or event.type not in (EventType.PLAYER_INPUT, EventType.NPC_SPEECH, EventType.DM_NARRATION):
                 continue
             if event.type == EventType.DM_NARRATION:
@@ -85,7 +89,7 @@ def main():
 
     st.caption(f"{state.phase.value.upper()} · 第 {state.turn} 回合 · 对局 {game_id[:8]}")
     if state.phase not in (Phase.ENTRY, Phase.RECAP, Phase.END):
-        st.sidebar.metric("剩余搜证点", next(iter(state.seats.values())).search_points)
+        st.sidebar.metric("剩余搜证点", seat.search_points)
     if state.phase == Phase.ENTRY:
         st.write(script.acts[0].public_narrative)
         if st.button("开始阅读"):
@@ -148,7 +152,7 @@ def main():
         dialogue(Phase.CONFRONT)
         role_id = st.selectbox("你指认谁", list(script.characters),
                                format_func=lambda x: script.characters[x].display_name)
-        owned = list(dict.fromkeys(state.public_clue_ids + next(iter(state.seats.values())).private_clue_ids))
+        owned = list(dict.fromkeys(state.public_clue_ids + seat.private_clue_ids))
         evidence = st.multiselect("关键证据", owned,
                                   format_func=lambda x: script.clues[x].display_name)
         with st.form("confront_talk", clear_on_submit=True):
@@ -192,10 +196,14 @@ def main():
             all_events = store.events(game_id)
             if all_events:
                 seq = st.slider("事件序号", 0, all_events[-1].seq, all_events[-1].seq)
-                seat_id = next(iter(state.seats))
-                perspectives = [seat_id, *script.characters]
+                author_token = os.getenv("AUTHOR_TOKEN")
+                entered_token = st.text_input("作者令牌", type="password") if author_token else ""
+                author_view = bool(author_token and entered_token == author_token)
+                perspectives = [seat_id, *script.characters] if author_view else [seat_id]
                 perspective = st.selectbox("视角", perspectives,
                                             format_func=lambda key: "玩家" if key == seat_id else script.characters[key].display_name)
+                if perspective != seat_id:
+                    scripts.audit("author", "replay_perspective", game_id, f"{perspective}@{seq}")
                 historic, visible, perception = replay_at(script, store, game_id, seq, perspective)
                 st.write(f"第 {historic.turn} 回合 · {historic.phase.value.upper()}")
                 for event in visible:
@@ -208,7 +216,7 @@ def main():
                 if perception is not None:
                     st.write("该时刻角色认知")
                     st.json(perception.model_dump())
-            player_clues = set(state.public_clue_ids) | set(next(iter(state.seats.values())).private_clue_ids)
+            player_clues = set(state.public_clue_ids) | set(seat.private_clue_ids)
             reference = reference_evidence(script)
             st.write("IR 参考证据：" + "、".join(script.clues[key].display_name for key in reference))
             st.write("已获得：" + "、".join(script.clues[key].display_name for key in reference if key in player_clues))
@@ -217,7 +225,7 @@ def main():
             play("end")
     if state.phase not in (Phase.ENTRY, Phase.READ):
         st.sidebar.subheader("线索板")
-        for clue_id in dict.fromkeys(state.public_clue_ids + next(iter(state.seats.values())).private_clue_ids):
+        for clue_id in dict.fromkeys(state.public_clue_ids + seat.private_clue_ids):
             clue = script.clues[clue_id]
             st.sidebar.write(f"**{clue.display_name}** · {clue.surface_text}")
     if st.sidebar.button("新开一局"):

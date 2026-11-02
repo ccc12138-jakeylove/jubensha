@@ -1,6 +1,7 @@
 import json
 import sqlite3
 from pathlib import Path
+from uuid import uuid4
 
 from jubensha.schema.events import GameEvent
 from jubensha.schema.state import GameState, SeatState
@@ -11,6 +12,7 @@ class EventStore:
     def __init__(self, path: str | Path):
         self.path = str(path)
         with self.connect() as db:
+            db.execute("PRAGMA journal_mode=WAL")
             db.executescript("""
                 CREATE TABLE IF NOT EXISTS games (
                     game_id TEXT PRIMARY KEY, script_id TEXT NOT NULL, act_id TEXT NOT NULL,
@@ -19,6 +21,10 @@ class EventStore:
                 CREATE TABLE IF NOT EXISTS game_seats (
                     game_id TEXT NOT NULL, seat_id TEXT NOT NULL, role_id TEXT,
                     PRIMARY KEY (game_id, seat_id)
+                );
+                CREATE TABLE IF NOT EXISTS game_create_keys (
+                    idempotency_key TEXT PRIMARY KEY, script_id TEXT NOT NULL,
+                    game_id TEXT NOT NULL
                 );
                 CREATE TABLE IF NOT EXISTS game_events (
                     game_id TEXT NOT NULL, seq INTEGER NOT NULL, event_json TEXT NOT NULL,
@@ -41,15 +47,24 @@ class EventStore:
                     candidate TEXT NOT NULL, reason TEXT NOT NULL,
                     created_at TEXT DEFAULT CURRENT_TIMESTAMP
                 );
+                CREATE TABLE IF NOT EXISTS llm_cache (
+                    cache_key TEXT PRIMARY KEY, response_text TEXT NOT NULL,
+                    created_at TEXT DEFAULT CURRENT_TIMESTAMP
+                );
             """)
             columns = {row[1] for row in db.execute("PRAGMA table_info(llm_traces)")}
             if "cost_usd" not in columns:
                 db.execute("ALTER TABLE llm_traces ADD COLUMN cost_usd REAL")
+            for column, data_type in {"model": "TEXT", "prompt_hash": "TEXT",
+                                      "route_reason": "TEXT", "cache_hit": "INTEGER DEFAULT 0"}.items():
+                if column not in columns:
+                    db.execute(f"ALTER TABLE llm_traces ADD COLUMN {column} {data_type}")
             db.execute("INSERT OR IGNORE INTO game_seats (game_id,seat_id,role_id) SELECT game_id,seat_id,NULL FROM games")
 
     def connect(self):
-        db = sqlite3.connect(self.path)
+        db = sqlite3.connect(self.path, timeout=30)
         db.row_factory = sqlite3.Row
+        db.execute("PRAGMA busy_timeout=30000")
         return db
 
     def create_game(self, game_id: str, script_id: str, act_id: str, seat_id: str = "seat_1") -> None:
@@ -57,6 +72,23 @@ class EventStore:
             db.execute("INSERT INTO games (game_id,script_id,act_id,seat_id) VALUES (?,?,?,?)",
                        (game_id, script_id, act_id, seat_id))
             db.execute("INSERT INTO game_seats VALUES (?,?,NULL)", (game_id, seat_id))
+
+    def create_game_idempotent(self, script_id: str, act_id: str, key: str,
+                               seat_id: str = "seat_1") -> str:
+        with self.connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            existing = db.execute("SELECT script_id,game_id FROM game_create_keys WHERE idempotency_key=?",
+                                  (key,)).fetchone()
+            if existing:
+                if existing["script_id"] != script_id:
+                    raise ValueError("idempotency key was used for a different script")
+                return existing["game_id"]
+            game_id = uuid4().hex
+            db.execute("INSERT INTO games (game_id,script_id,act_id,seat_id) VALUES (?,?,?,?)",
+                       (game_id, script_id, act_id, seat_id))
+            db.execute("INSERT INTO game_seats VALUES (?,?,NULL)", (game_id, seat_id))
+            db.execute("INSERT INTO game_create_keys VALUES (?,?,?)", (key, script_id, game_id))
+            return game_id
 
     def add_seat(self, game_id: str, seat_id: str, role_id: str | None = None) -> None:
         with self.connect() as db:
@@ -173,10 +205,13 @@ class EventStore:
         })
 
     def trace(self, game_id: str, node: str, prompt_version: str, input_tokens: int,
-              output_tokens: int, latency_ms: int, cost_usd: float | None = None) -> None:
+              output_tokens: int, latency_ms: int, cost_usd: float | None = None,
+              model: str | None = None, prompt_hash: str | None = None,
+              route_reason: str | None = None, cache_hit: bool = False) -> None:
         with self.connect() as db:
-            db.execute("INSERT INTO llm_traces (game_id,node,prompt_version,input_tokens,output_tokens,latency_ms,cost_usd) VALUES (?,?,?,?,?,?,?)",
-                       (game_id, node, prompt_version, input_tokens, output_tokens, latency_ms, cost_usd))
+            db.execute("INSERT INTO llm_traces (game_id,node,prompt_version,input_tokens,output_tokens,latency_ms,cost_usd,model,prompt_hash,route_reason,cache_hit) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                       (game_id, node, prompt_version, input_tokens, output_tokens, latency_ms,
+                        cost_usd, model, prompt_hash, route_reason, int(cache_hit)))
 
     def guard_case(self, game_id: str, role_id: str, question: str,
                    candidate: str, reason: str) -> None:
@@ -188,3 +223,33 @@ class EventStore:
         with self.connect() as db:
             return [dict(row) for row in db.execute("SELECT * FROM guard_cases WHERE game_id=? ORDER BY id",
                                                     (game_id,))]
+
+    def cache_get(self, key: str) -> str | None:
+        with self.connect() as db:
+            row = db.execute("SELECT response_text FROM llm_cache WHERE cache_key=?", (key,)).fetchone()
+        return row[0] if row else None
+
+    def cache_put(self, key: str, response: str) -> None:
+        with self.connect() as db:
+            db.execute("INSERT OR REPLACE INTO llm_cache (cache_key,response_text) VALUES (?,?)",
+                       (key, response))
+
+    def trace_summary(self, script_id: str | None = None) -> list[dict]:
+        with self.connect() as db:
+            rows = [dict(row) for row in db.execute(
+                "SELECT t.node,t.model,t.input_tokens,t.output_tokens,t.latency_ms,t.cost_usd,t.cache_hit FROM llm_traces t LEFT JOIN games g ON g.game_id=t.game_id WHERE ? IS NULL OR g.script_id=?",
+                (script_id, script_id))]
+        groups: dict[tuple[str, str], list[dict]] = {}
+        for row in rows:
+            groups.setdefault((row["model"] or "unknown", row["node"]), []).append(row)
+        summary = []
+        for (model, node), items in sorted(groups.items()):
+            latencies = sorted(item["latency_ms"] for item in items if not item["cache_hit"])
+            summary.append({"model": model, "node": node, "calls": len(items),
+                            "cache_hits": sum(item["cache_hit"] or 0 for item in items),
+                            "input_tokens": sum(item["input_tokens"] for item in items),
+                            "output_tokens": sum(item["output_tokens"] for item in items),
+                            "cost_usd": sum(item["cost_usd"] or 0 for item in items),
+                            "p50_ms": latencies[len(latencies) // 2] if latencies else None,
+                            "p95_ms": latencies[int(.95 * (len(latencies) - 1))] if latencies else None})
+        return summary

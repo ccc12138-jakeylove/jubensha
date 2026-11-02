@@ -4,9 +4,37 @@ from uuid import uuid4
 import streamlit as st
 
 from jubensha.compiler.pipeline import compile_document
+from jubensha.compiler.report import render_lint_report
 from jubensha.schema.ir import Script
 from jubensha.storage.events import EventStore
 from jubensha.storage.scripts import ScriptStore
+
+
+def _field_value(ir: dict, path: str):
+    if "." not in path:
+        return ir[path]
+    root, item_id = path.split(".", 1)
+    collection = ir[root]
+    if isinstance(collection, dict):
+        return collection[item_id]
+    identifier = "event_id" if root == "truth_events" else "act_id"
+    return next(item for item in collection if item.get(identifier) == item_id)
+
+
+def _set_field_value(ir: dict, path: str, value) -> dict:
+    updated = dict(ir)
+    if "." not in path:
+        updated[path] = value
+        return updated
+    root, item_id = path.split(".", 1)
+    collection = ir[root]
+    if isinstance(collection, dict):
+        updated[root] = dict(collection) | {item_id: value}
+    else:
+        identifier = "event_id" if root == "truth_events" else "act_id"
+        updated[root] = [value if item.get(identifier) == item_id else item
+                         for item in collection]
+    return updated
 
 
 def show_library(fixture: Script, events: EventStore, scripts: ScriptStore) -> None:
@@ -30,10 +58,14 @@ def show_library(fixture: Script, events: EventStore, scripts: ScriptStore) -> N
     st.subheader("导入剧本")
     upload = st.file_uploader("剧本文件", type=["txt", "md", "docx", "pdf", "json"])
     authorized = st.checkbox("我确认拥有此剧本的使用权或已获授权")
-    if upload is not None and st.button("编译并保存草稿", disabled=not authorized):
+    rights_source = st.text_input("授权来源", placeholder="本人原创或授权链接")
+    rights_contact = st.text_input("授权联系人（选填）")
+    if upload is not None and st.button("编译并保存草稿", disabled=not authorized or not rights_source.strip()):
         try:
+            upload_id = scripts.save_upload(upload.name, upload.getvalue(),
+                                            rights_source, rights_contact)
             draft = compile_document(upload.name, upload.getvalue(), events)
-            draft_id = scripts.save_draft(draft)
+            draft_id = scripts.save_draft(draft, upload_id)
             st.query_params["view"] = "review"
             st.query_params["draft"] = draft_id
             st.rerun()
@@ -57,30 +89,89 @@ def show_review(scripts: ScriptStore, draft_id: str) -> None:
         return
     st.title(draft["title"])
     st.caption(draft["status"])
-    left, right = st.columns(2)
+    provenance_items = draft["ir"].get("provenance", {})
+    fields = []
+    for key in draft["ir"]:
+        if key in ("provenance", "parser_meta", "linter_report"):
+            continue
+        fields.append(key)
+        fields.extend(path for path in provenance_items if path.startswith(key + "."))
+    selected = st.selectbox("字段", fields)
+    left, middle, right = st.columns([1.1, 1.2, 1])
     with left:
-        st.subheader("IR")
-        edited = st.text_area("结构化剧本", json.dumps(draft["ir"], ensure_ascii=False, indent=2), height=520)
-        if draft["status"] == "draft" and st.button("保存修改"):
+        st.subheader("原文")
+        provenance = provenance_items.get(selected, {})
+        span = provenance.get("source_span")
+        if span and len(span) == 2:
+            start, end = span
+            st.caption(f"{provenance.get('source_doc', '')} · 页 {provenance.get('source_page') or '-'} · {start}:{end}")
+            st.code(draft["source_text"][max(0, start - 240):min(len(draft["source_text"]), end + 240)])
+        else:
+            st.info("该字段尚无定位来源")
+        with st.expander("完整原文"):
+            st.text(draft["source_text"])
+    with middle:
+        st.subheader("结构化字段")
+        st.caption(f"置信度 {provenance.get('confidence', 0):.0%}" if provenance else "待校对")
+        field_key = f"field_{draft_id}_{selected}"
+        edited_field = st.text_area("字段 JSON", json.dumps(_field_value(draft["ir"], selected), ensure_ascii=False, indent=2),
+                                    height=440, key=field_key)
+        if draft["status"] == "draft" and st.button("保存字段"):
             try:
-                scripts.update_ir(draft_id, edited)
+                updated = _set_field_value(draft["ir"], selected, json.loads(edited_field))
+                scripts.update_ir(draft_id, json.dumps(updated, ensure_ascii=False))
+                del st.session_state[field_key]
                 st.rerun()
             except Exception as exc:
                 st.error(str(exc))
+        with st.expander("完整 IR"):
+            edited = st.text_area("结构化剧本", json.dumps(draft["ir"], ensure_ascii=False, indent=2),
+                                  height=400)
+            if draft["status"] == "draft" and st.button("保存完整 IR"):
+                try:
+                    scripts.update_ir(draft_id, edited)
+                    st.rerun()
+                except Exception as exc:
+                    st.error(str(exc))
     with right:
-        st.subheader("原文与校对")
+        st.subheader("校验与引用")
+        if selected == "clues" or selected.startswith("clues."):
+            clues = draft["ir"].get("clues", {})
+            items = ([(selected.split(".", 1)[1], _field_value(draft["ir"], selected))]
+                     if selected.startswith("clues.") else clues.items() if isinstance(clues, dict) else [])
+            for clue_id, clue in items:
+                if isinstance(clue, dict):
+                    st.write(f"{clue_id} → {clue.get('location_id', '?')} · 事件 {', '.join(clue.get('reveals_event_ids', []))} · 秘密 {', '.join(clue.get('reveals_secret_ids', []))}")
         for item_id, item, resolved in scripts.reviews(draft_id):
+            if item.field_path not in (selected, "*") and not item.field_path.startswith(selected + "."):
+                continue
             st.write(f"{item.conflict_type} · {item.field_path} · {item.message}")
             if item.source_span:
                 start, end = item.source_span
-                st.code(draft["source_text"][max(0, start - 120):end + 120])
+                st.code(draft["source_text"][max(0, start - 120):min(len(draft["source_text"]), end + 120)])
             if not resolved and draft["status"] == "draft" and st.button("标记已处理", key=f"resolve_{item_id}"):
                 scripts.resolve(draft_id, item_id)
                 st.rerun()
+        with st.expander("全部待处理项"):
+            for _, item, resolved in scripts.reviews(draft_id):
+                if not resolved:
+                    st.write(f"{item.field_path} · {item.message}")
+    revisions = scripts.revisions(draft_id)
+    if revisions:
+        with st.expander("版本记录"):
+            for revision in revisions:
+                st.write(f"#{revision['revision_id']} · {revision['created_at']} · {revision['diff_summary']}")
+                if draft["status"] == "draft" and st.button("回退到此版本", key=f"rollback_{revision['revision_id']}"):
+                    scripts.rollback(draft_id, revision["revision_id"])
+                    st.rerun()
     report = draft["ir"].get("linter_report")
     if report:
         st.subheader("质检报告")
-        st.json(report)
+        try:
+            script = Script.model_validate(draft["ir"])
+            st.markdown(render_lint_report(script, script.linter_report))
+        except Exception:
+            st.json(report)
     if draft["status"] == "draft" and st.button("发布剧本"):
         try:
             scripts.publish(draft_id)
