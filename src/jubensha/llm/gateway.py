@@ -21,6 +21,7 @@ def model_for(node: str) -> tuple[str, str]:
     route = ("COMPILER" if node.startswith("compiler") else
              "NPC" if node.startswith("npc") else
              "JUDGE" if node.startswith("judge") or node == "eval_judge" else
+             "SIMULATOR" if node.startswith("simulator") or node in ("search_plan", "vote_plan") else
              "GUARD" if node.startswith("guard") else "DEFAULT")
     selected = os.getenv(f"LLM_MODEL_{route}") if route != "DEFAULT" else None
     return selected or os.environ["LLM_MODEL"], route.lower()

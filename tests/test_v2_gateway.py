@@ -7,7 +7,9 @@ from jubensha.storage.events import EventStore
 def test_compiler_model_route_and_cache(tmp_path, monkeypatch):
     monkeypatch.setenv("LLM_MODEL", "ollama/small")
     monkeypatch.setenv("LLM_MODEL_STRONG", "ollama/strong")
+    monkeypatch.setenv("LLM_MODEL_SIMULATOR", "ollama/player")
     assert model_for("compiler_repair") == ("ollama/strong", "repair_escalation")
+    assert model_for("vote_plan") == ("ollama/player", "simulator")
     calls = []
     def completion(**kwargs):
         calls.append(kwargs["model"])

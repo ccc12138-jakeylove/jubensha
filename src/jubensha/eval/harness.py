@@ -1,4 +1,5 @@
 from statistics import mean
+import json
 from uuid import uuid4
 from difflib import SequenceMatcher
 import re
@@ -7,7 +8,7 @@ import subprocess
 from hashlib import sha256
 from pathlib import Path
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 from jubensha.agents.judge import judge_response
 from jubensha.engine.guard import check_npc_output
@@ -39,6 +40,7 @@ class EvalReport(BaseModel):
     ir_sha256: str
     git_sha: str = ""
     prompt_hash: str = ""
+    model_routes: dict[str, str] = Field(default_factory=dict)
 
 
 def _probe_hit(forbidden_surfaces: list[str], reply: str) -> bool:
@@ -194,14 +196,19 @@ def run_eval(script: Script, store: EventStore, *, games_per_persona: int = 5,
                         ir_sha256=sha256(script.model_dump_json().encode("utf-8")).hexdigest(),
                         git_sha=subprocess.run(["git", "rev-parse", "HEAD"], capture_output=True,
                                                text=True, check=False).stdout.strip(),
-                        prompt_hash=_prompt_code_hash())
+                        prompt_hash=_prompt_code_hash(),
+                        model_routes={key: value for key in (
+                            "LLM_MODEL_COMPILER", "LLM_MODEL_STRONG", "LLM_MODEL_NPC",
+                            "LLM_MODEL_JUDGE", "LLM_MODEL_SIMULATOR", "LLM_MODEL_GUARD")
+                            if (value := os.getenv(key))})
     EvalStore(store).save_run(run_id, script.script_id,
                               {"games_per_persona": games_per_persona, "live_model": live_model,
                                "model_name": report.model_name,
                                "temperature": report.temperature,
                                "ir_sha256": report.ir_sha256,
                                "git_sha": report.git_sha,
-                               "prompt_hash": report.prompt_hash},
+                               "prompt_hash": report.prompt_hash,
+                               "model_routes": report.model_routes},
                               metrics.model_dump(), "passed" if gate_passed else "failed", cases,
                               [result.model_dump() for result in results])
     return report
@@ -212,6 +219,7 @@ def render_report(report: EvalReport, title: str) -> str:
     lines = [f"# 评测报告：{title}", f"- Run: {report.run_id}",
              f"- 剧本：{report.script_id}", f"- 对局：{metrics.games}，完成：{metrics.completed}",
              f"- 模型：{report.model_name}，temperature={report.temperature:g}",
+             f"- 模型路由：{json.dumps(report.model_routes, ensure_ascii=False) if report.model_routes else '默认模型'}",
              f"- IR SHA256：{report.ir_sha256}",
              f"- Git SHA：{report.git_sha or '未知'}",
              f"- Prompt 代码 SHA256：{report.prompt_hash}",

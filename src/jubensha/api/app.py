@@ -20,6 +20,7 @@ from jubensha.compiler.pipeline import compile_document
 from jubensha.engine.fsm import Phase
 from jubensha.engine.loop import build_turn_graph, run_turn
 from jubensha.engine.replay import replay_at
+from jubensha.engine.recap import analyze_recap
 from jubensha.engine.world import TruthStore
 from jubensha.eval.harness import run_eval
 from jubensha.schema.ir import Script
@@ -503,6 +504,16 @@ def create_app(db_path: str | None = None, fixture_path: str | None = None) -> F
             raise HTTPException(403, "report unlocks after recap")
         return {"judgment": judge_submission(script, state).model_dump(),
                 "truth": TruthStore(script).recap()}
+
+    @api.get("/api/v2/games/{game_id}/recap")
+    def get_recap_v2(game_id: str, seat_id: str = "seat_1",
+                     authorization: str | None = Header(default=None)):
+        require_token(authorization)
+        script = game_script(game_id)
+        state = seat_state(game_id, seat_id)
+        if state.phase not in (Phase.RECAP, Phase.END):
+            raise HTTPException(403, "recap unlocks after vote")
+        return analyze_recap(script, state, events.events_for_seat(game_id, seat_id), seat_id)
 
     @api.post("/api/evals/run")
     def run_evaluation(body: EvalRequest, authorization: str | None = Header(default=None)):

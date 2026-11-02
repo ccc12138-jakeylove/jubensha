@@ -13,6 +13,7 @@ def test_api_game_and_recap(tmp_path, script, monkeypatch):
     client = TestClient(create_app(str(tmp_path / "api.db")))
     game_id = client.post("/api/games", json={"script_id": script.script_id}).json()["game_id"]
     assert client.get(f"/api/games/{game_id}/report").status_code == 403
+    assert client.get(f"/api/v2/games/{game_id}/recap").status_code == 403
     def turn(action, **kwargs):
         response = client.post(f"/api/games/{game_id}/turns", json={"action": action, **kwargs})
         assert response.status_code == 200, response.text
@@ -32,6 +33,9 @@ def test_api_game_and_recap(tmp_path, script, monkeypatch):
     assert judgment.json()["passed"]
     turn("recap")
     assert client.get(f"/api/games/{game_id}/report").status_code == 200
+    recap = client.get(f"/api/v2/games/{game_id}/recap")
+    assert recap.status_code == 200
+    assert "missing_clue_ids" in recap.json() and "first_found_turn" in recap.json()
     assert client.get(f"/api/games/{game_id}/replay?seq=0").json()["state"]["turn"] == 0
     assert client.get(f"/api/games/{game_id}/replay", params={"perspective": "lin_suyun"}).status_code == 403
     monkeypatch.setenv("AUTHOR_TOKEN", "author-secret")

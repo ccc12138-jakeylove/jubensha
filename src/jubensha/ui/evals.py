@@ -40,11 +40,11 @@ def show_evals(fixture: Script, events: EventStore, scripts: ScriptStore) -> Non
     if job_rows:
         st.dataframe([{"任务": item["job_id"][:8], "状态": item["status"],
                        "结果": item["run_id"] or item["error"] or ""}
-                      for item in job_rows], hide_index=True, use_container_width=True)
+                      for item in job_rows], hide_index=True, width="stretch")
     costs = events.trace_summary(script_id)
     if costs:
         st.subheader("模型调用")
-        st.dataframe(costs, hide_index=True, use_container_width=True)
+        st.dataframe(costs, hide_index=True, width="stretch")
     runs = EvalStore(events).list_runs(script_id)
     if runs:
         models = sorted({json.loads(run["config_json"]).get("model_name", "offline") for run in runs})
@@ -61,19 +61,19 @@ def show_evals(fixture: Script, events: EventStore, scripts: ScriptStore) -> Non
                        if isinstance(first.get(key), (int, float)) and isinstance(second.get(key), (int, float))
                        else None}
                       for key in sorted(set(first) | set(second))],
-                     hide_index=True, use_container_width=True)
+                     hide_index=True, width="stretch")
     for run in runs:
         with st.expander(f"{run['created_at']} · {run['status']} · {run['run_id'][:8]}"):
             metrics = json.loads(run["metrics_json"])
             st.dataframe([{"指标": key, "结果": value} for key, value in metrics.items()],
-                         hide_index=True, use_container_width=True)
+                         hide_index=True, width="stretch")
             results = json.loads(run["results_json"])
             if results:
                 st.write("逐局结果")
-                st.dataframe(results, hide_index=True, use_container_width=True)
+                st.dataframe(results, hide_index=True, width="stretch")
             cases = EvalStore(events).cases(run["run_id"])
             if cases:
                 st.write("失败与探针案例")
                 st.dataframe([{"类别": item["category"], "命中": bool(item["hit"]),
                                "输入": item["input_json"], "实际": item["actual_json"]}
-                              for item in cases], hide_index=True, use_container_width=True)
+                              for item in cases], hide_index=True, width="stretch")

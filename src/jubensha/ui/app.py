@@ -9,6 +9,8 @@ from jubensha.engine.fsm import Phase
 from jubensha.engine.loop import build_turn_graph, run_turn
 from jubensha.engine.search import available_clues
 from jubensha.engine.seats import current_seat
+from jubensha.engine.board import relationship_dot, visible_relationships, clue_dot, timeline_rows
+from jubensha.engine.recap import analyze_recap
 from jubensha.engine.replay import reference_evidence, replay_at
 from jubensha.engine.world import TruthStore
 from jubensha.agents.referee import judge_submission
@@ -186,6 +188,11 @@ def main():
             st.write(f"{key}：{'符合' if correct else '未符合'}")
         st.write(f"你的动机判断：{state.vote_motive or '未填写'}")
         st.write("你的证据：" + ("、".join(script.clues[c].display_name for c in state.vote_evidence_ids) or "未选择"))
+        analysis = analyze_recap(script, state, store.events_for_seat(game_id, seat_id), seat_id)
+        st.subheader("证据链")
+        st.write("参考路径：" + (" → ".join(script.clues[key].display_name for key in analysis["reference_clue_ids"]) or "暂无"))
+        st.write("未发现：" + ("、".join(script.clues[key].display_name for key in analysis["missing_clue_ids"]) or "无"))
+        st.write("已发现但未提交：" + ("、".join(script.clues[key].display_name for key in analysis["not_submitted_clue_ids"]) or "无"))
         st.subheader("完整时间线")
         for event in truth["timeline"]:
             st.write(f"{event['event_id']} · t={event['t_start']}：{event['action']}")
@@ -228,6 +235,26 @@ def main():
         for clue_id in dict.fromkeys(state.public_clue_ids + seat.private_clue_ids):
             clue = script.clues[clue_id]
             st.sidebar.write(f"**{clue.display_name}** · {clue.surface_text}")
+        with st.expander("推理板"):
+            relations_tab, clues_tab, timeline_tab = st.tabs(["关系图", "证据链", "时间线"])
+            with relations_tab:
+                st.graphviz_chart(relationship_dot(script, state, seat_id), width="stretch")
+                relation_labels = {"lover": "恋人", "kin": "亲属", "debtor": "债务",
+                                   "rival": "对手", "employer": "雇佣", "stranger": "陌生人"}
+                def name(role_id: str) -> str:
+                    return script.characters[role_id].display_name if role_id in script.characters else role_id.replace("_", " ")
+                relations = [{"人物": name(item.from_role),
+                              "关系": relation_labels.get(item.type, item.type),
+                              "对象": name(item.to_role)}
+                             for item in visible_relationships(script, state, seat_id)]
+                if relations:
+                    st.dataframe(relations, hide_index=True, width="stretch")
+            with clues_tab:
+                st.graphviz_chart(clue_dot(script, state, seat_id), width="stretch")
+            with timeline_tab:
+                rows = timeline_rows(store.events_for_seat(game_id, seat_id))
+                if rows:
+                    st.dataframe(rows, hide_index=True, width="stretch")
     if st.sidebar.button("新开一局"):
         new_id = uuid4().hex
         store.create_game(new_id, script.script_id, script.acts[0].act_id)
