@@ -6,7 +6,7 @@ from docx import Document
 
 from jubensha.compiler.ingest import read_document, segment_document
 from jubensha.compiler.lint import lint_script
-from jubensha.compiler.pipeline import EXTRACT_FIELDS, ReviewItem, _normalize_container, _parse_json_response, _select_excerpt, compile_document
+from jubensha.compiler.pipeline import EXTRACT_FIELDS, ExtractionError, ReviewItem, _extract_field, _normalize_container, _parse_json_response, _select_excerpt, compile_document
 from jubensha.storage.events import EventStore
 from jubensha.storage.scripts import ScriptStore
 
@@ -33,6 +33,14 @@ def test_extract_selection_can_reach_end_of_long_script():
     assert "凶手结局在最后" in _select_excerpt("truth_events", segments)
 
 
+def test_clue_selection_keeps_host_solution_across_tail_segments():
+    segments = segment_document("long.txt", "Opening. " * 700 + "First clue in host notes. "
+                                + "Filler. " * 500 + "Final clue in host notes.", max_chars=3000)
+    excerpt = _select_excerpt("clues", segments, max_chars=6500)
+    assert "First clue in host notes" in excerpt
+    assert "Final clue in host notes" in excerpt
+
+
 def test_syntax_repair_is_explicit():
     result, repaired = _parse_json_response('{"value": {"A": 1 "B": 2}}')
     assert repaired
@@ -44,6 +52,15 @@ def test_id_keyed_list_can_be_normalized_without_new_facts():
     assert normalized and set(value) == {"r1", "r2"}
     with pytest.raises(ValueError, match="duplicate"):
         _normalize_container("characters", [{"role_id": "r1"}, {"role_id": "r1"}])
+
+
+def test_invalid_field_keeps_partial_result_for_review(tmp_path, monkeypatch):
+    monkeypatch.setattr("jubensha.compiler.pipeline.generate", lambda *args, **kwargs:
+                        json.dumps({"value": [{"clue_id": "C1", "surface_text": "A marked cup"}]}))
+    segments = segment_document("case.txt", "A marked cup")
+    with pytest.raises(ExtractionError) as caught:
+        _extract_field("clues", segments, EventStore(tmp_path / "game.db"), "test")
+    assert caught.value.partial["C1"]["surface_text"] == "A marked cup"
 
 
 def test_linter_detects_dead_script(script):
@@ -105,6 +122,22 @@ def test_natural_language_extracts_by_schema(script, tmp_path, monkeypatch):
     result = compile_document("strange.md", "# 角色本\n一段陌生剧本文字".encode(), store)
     assert result.valid
     assert set(result.ir["provenance"]) == set(EXTRACT_FIELDS)
+
+
+def test_compile_draft_keeps_invalid_clues_but_blocks_publication(script, tmp_path, monkeypatch):
+    source = script.model_dump(mode="json")
+    def mock_generate(store, trace_id, node, version, messages, max_tokens=4000, json_mode=False):
+        field = version.split(".")[-2]
+        value = [{"clue_id": "C1", "surface_text": "A marked cup"}] if field == "clues" else source[field]
+        return json.dumps({"value": value, "confidence": 0.9, "source_span": [0, 12]})
+    monkeypatch.setattr("jubensha.compiler.pipeline.configured", lambda: True)
+    monkeypatch.setattr("jubensha.compiler.pipeline.generate", mock_generate)
+    store = EventStore(tmp_path / "game.db")
+    result = compile_document("case.txt", b"A marked cup", store)
+    assert not result.valid
+    assert result.ir["clues"]["C1"]["surface_text"] == "A marked cup"
+    assert any(item.field_path == "clues" and item.conflict_type == "parse_error"
+               for item in result.review_items)
 
 
 def test_no_model_produces_reviewable_failure(tmp_path, monkeypatch):

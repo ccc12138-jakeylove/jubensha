@@ -33,6 +33,12 @@ class CompilationDraft(BaseModel):
     valid: bool
 
 
+class ExtractionError(ValueError):
+    def __init__(self, message: str, partial: Any = None):
+        super().__init__(message)
+        self.partial = partial
+
+
 EXTRACT_FIELDS = (
     "script_id", "title", "genre", "ir_version", "tone", "seat_range",
     "win_condition", "acts", "characters", "truth_events", "clues",
@@ -81,8 +87,8 @@ def _select_excerpt(field: str, segments: list[DocumentSegment], max_chars: int 
         int(segments[index].kind in ("truth", "character", "clue"))), reverse=True)
     if field in ("script_id", "title", "genre", "ir_version", "tone", "seat_range", "win_condition"):
         priorities = [0, *priorities]
-    if field in ("truth_events", "secrets", "win_condition"):
-        priorities = [len(segments) - 1, *priorities]
+    if field in ("truth_events", "secrets", "win_condition", "clues"):
+        priorities = [len(segments) - 1, max(0, len(segments) - 2), *priorities]
     chosen = []
     length = 0
     for index in dict.fromkeys(priorities):
@@ -119,6 +125,7 @@ def _extract_field(field: str, segments: list[DocumentSegment], store: EventStor
         {"role": "user", "content": f"抽取字段 {field}。value 必须符合此 JSON Schema：{json.dumps(schema, ensure_ascii=False)}\n原文：\n{excerpt}"},
     ]
     failure = ""
+    partial = None
     for attempt in range(3):
         prompt = messages + ([{"role": "user", "content": f"上次格式错误：{failure}。请只重试 JSON。"}]
                              if failure else [])
@@ -128,6 +135,8 @@ def _extract_field(field: str, segments: list[DocumentSegment], store: EventStor
             result, repaired = _parse_json_response(raw)
             candidate = result.get("value", result.get(field, result))
             candidate, normalized = _normalize_container(field, candidate)
+            if isinstance(candidate, (dict, list)):
+                partial = candidate
             repaired = repaired or normalized
             value = adapter.validate_python(candidate)
             if field in REQUIRED_NONEMPTY and not value:
@@ -141,7 +150,7 @@ def _extract_field(field: str, segments: list[DocumentSegment], store: EventStor
             return value, confidence, (int(span[0]), int(span[1])), repaired
         except (ValueError, KeyError, TypeError, ValidationError) as exc:
             failure = str(exc)[:500]
-    raise ValueError(f"{field}: failed after 3 attempts: {failure}")
+    raise ExtractionError(f"{field}: failed after 3 attempts: {failure}", partial)
 
 
 def _reconcile(ir: dict) -> list[ReviewItem]:
@@ -199,8 +208,12 @@ def compile_document(filename: str, content: bytes, store: EventStore) -> Compil
                                                   message="模型 JSON 或容器经修复，需核对原文" if repaired else "需要人工核对原文",
                                                   source_span=span))
                 except Exception as exc:
+                    if isinstance(exc, ExtractionError) and exc.partial is not None:
+                        ir[field] = exc.partial
                     reviews.append(ReviewItem(field_path=field, confidence=0,
-                                              conflict_type="parse_error", message=str(exc)[:500]))
+                                              conflict_type="parse_error",
+                                              message=("保留部分抽取结果供校对；" if field in ir else "")
+                                              + str(exc)[:500]))
             ir["provenance"] = provenance
             if "secrets" in ir:
                 ir["leak_surfaces"] = {
