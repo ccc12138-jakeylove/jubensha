@@ -1,4 +1,5 @@
 from jubensha.schema.ir import LintIssue, LinterReport, Script, SolvabilityResult
+from jubensha.agents.referee import text_terms
 
 
 def lint_script(script: Script) -> LinterReport:
@@ -34,6 +35,16 @@ def lint_script(script: Script) -> LinterReport:
     for key, knowledge in script.knowledge.items():
         if key not in script.characters or knowledge.role_id != key:
             issue("BROKEN_KNOWLEDGE_REFERENCE", "blocker", key, "认知切片与角色不匹配")
+        statement_ids = [item.statement_id for item in knowledge.statements]
+        if len(statement_ids) != len(set(statement_ids)) or any(
+                not item.statement_id.startswith("K") or not item.text.strip()
+                for item in knowledge.statements):
+            issue("INVALID_KNOWLEDGE_STATEMENT", "blocker", key,
+                  "角色陈述 ID 重复、格式错误或正文为空")
+        for statement in knowledge.statements:
+            if statement.approved and (not statement.source_doc or not statement.source_span):
+                issue("UNSOURCED_APPROVED_STATEMENT", "high", statement.statement_id,
+                      "已批准的角色陈述缺少原文来源")
         for event_id in knowledge.knows_event_ids:
             if event_id not in event_ids:
                 issue("BROKEN_KNOWLEDGE_REFERENCE", "blocker", key, f"未知事件 {event_id}")
@@ -133,6 +144,7 @@ def lint_script(script: Script) -> LinterReport:
     evidence = [clue_id for clue_id in reachable
                 if culprit_events.intersection(script.clues[clue_id].reveals_event_ids)
                 or any(script.secrets[secret_id].owner_role_id in culprits
+                       and script.secrets[secret_id].is_crime_secret
                        for secret_id in script.clues[clue_id].reveals_secret_ids
                        if secret_id in script.secrets)]
     relevant_clues = set(evidence)
@@ -161,7 +173,34 @@ def lint_script(script: Script) -> LinterReport:
         path.append(clue_id)
         return path
 
+    public_terms = text_terms(" ".join([act.public_narrative for act in script.acts]
+                                       + [character.public_profile for character in script.characters.values()]))
+    motive_terms = text_terms(" ".join(goal for role_id in culprits
+                                       for goal in script.characters[role_id].private_goals)) - public_terms
+    motive_clues = [clue_id for clue_id in reachable
+                    if motive_terms.intersection(text_terms(script.clues[clue_id].surface_text))]
+    def clue_context(clue_id: str) -> str:
+        clue = script.clues[clue_id]
+        location = script.locations.get(clue.location_id)
+        return clue.surface_text + (location.display_name if location else "")
+
+    identity_clues = [clue_id for clue_id in reachable
+                      if any(script.characters[role_id].display_name in clue_context(clue_id)
+                             for role_id in culprits)]
+    if "motive" in script.win_condition.required and not motive_clues:
+        issue("MISSING_MOTIVE_SUPPORT", "high", script.script_id,
+              "没有可达线索在文字上支持真凶动机，需核对语义可解性")
+    if "culprit" in script.win_condition.required and not identity_clues:
+        issue("MISSING_IDENTITY_SUPPORT", "high", script.script_id,
+              "没有可达线索在文字或搜查位置上直接指向真凶身份")
     candidate_paths = [prerequisite_path(clue_id) for clue_id in evidence]
+    if "motive" in script.win_condition.required and motive_clues:
+        candidate_paths = [list(dict.fromkeys(prerequisite_path(key_clue)
+                                              + prerequisite_path(motive_clue)))
+                           for key_clue in evidence for motive_clue in motive_clues]
+    if "culprit" in script.win_condition.required and identity_clues:
+        candidate_paths = [list(dict.fromkeys(path + prerequisite_path(identity_clue)))
+                           for path in candidate_paths for identity_clue in identity_clues]
     best_path = min(candidate_paths, key=lambda path: sum(script.clues[key].search_cost for key in path)) if candidate_paths else []
     minimum_cost = sum(script.clues[key].search_cost for key in best_path) if best_path else None
     if minimum_cost is not None and minimum_cost > total_budget:

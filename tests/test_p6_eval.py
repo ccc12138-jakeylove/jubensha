@@ -54,6 +54,7 @@ def test_model_player_uses_visible_clues_for_vote(script, tmp_path, monkeypatch)
             return ({"location_id": "room_302", "clue_id": "C02"}
                     if not public["found"] else {"location_id": "room_201", "clue_id": "C04"})
         assert "C04" in public["clues"]
+        assert "201 客房" in public["clues"]["C04"]
         return {"role_id": "chen_yanqiu", "motive": "怀表", "evidence_ids": ["C02"]}
     monkeypatch.setattr("jubensha.eval.simulator._model_json", plan)
     store = EventStore(tmp_path / "game.db")

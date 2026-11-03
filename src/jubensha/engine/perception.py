@@ -1,4 +1,4 @@
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 from jubensha.schema.ir import Script
 from jubensha.schema.state import GameState
@@ -15,6 +15,7 @@ class PerceptionView(BaseModel):
     speech_constraints: list[str]
     known_events: list[dict]
     known_clues: list[dict]
+    known_statements: list[dict] = Field(default_factory=list)
     false_beliefs: list[dict]
     forbidden_topics: list[str]
     public_summary: dict
@@ -46,6 +47,8 @@ def build_perception(script: Script, state: GameState, role_id: str) -> Percepti
         public_profile=character.public_profile, private_goals=list(character.private_goals),
         persona_style=character.persona_style, speech_constraints=list(character.speech_constraints),
         known_events=events, known_clues=clues,
+        known_statements=[{"statement_id": item.statement_id, "text": item.text}
+                          for item in knowledge.statements if item.approved],
         false_beliefs=[b.model_dump(exclude={"refuted_by_clue_ids"}) for b in knowledge.false_beliefs],
         forbidden_topics=list(knowledge.forbidden_topics), public_summary=public,
         relationships=relationships,

@@ -142,6 +142,11 @@ def test_linter_detects_multiple_culprits_and_unaffordable_path(script):
     thresholds.acts[0].director_critical_after = 16
     assert any(item.code == "INVALID_DIRECTOR_THRESHOLDS"
                for item in lint_script(thresholds).blockers)
+    unsupported = script.model_copy(deep=True)
+    culprit = next(role for role in unsupported.characters.values() if role.is_culprit)
+    culprit.private_goals = ["蓝鲸跃入星河"]
+    assert any(item.code == "MISSING_MOTIVE_SUPPORT"
+               for item in lint_script(unsupported).warnings)
 
 
 def test_linter_rejects_cross_reference_errors(script):
@@ -356,3 +361,34 @@ def test_partial_draft_can_be_saved_and_rolled_back(script, tmp_path):
     revision_id = scripts.revisions(script_id)[0]["revision_id"]
     scripts.rollback(script_id, revision_id)
     assert "clues" in scripts.get_draft(script_id)["ir"]
+
+
+def test_unconfirmed_package_rights_block_publication(script, tmp_path):
+    store = EventStore(tmp_path / "rights.db")
+    scripts = ScriptStore(store)
+    upload_id = scripts.save_upload("bundle.json", b"{}", rights_source="unverified package",
+                                    rights_confirmed=False)
+    draft = compile_document("case.json", script.model_dump_json().encode(), store)
+    scripts.save_draft(draft, upload_id)
+    with pytest.raises(ValueError, match="usage rights"):
+        scripts.publish(script.script_id)
+    scripts.confirm_rights(upload_id, "author license documented")
+    assert scripts.publish(script.script_id).script_id == script.script_id
+
+
+def test_local_only_package_cannot_be_confirmed_or_published(script, tmp_path):
+    store = EventStore(tmp_path / "local_only.db")
+    scripts = ScriptStore(store)
+    upload_id = scripts.save_upload("bundle.json", b"{}", rights_source="local verification only",
+                                    rights_confirmed=False, distribution_scope="local_only")
+    draft = compile_document("case.json", script.model_dump_json().encode(), store)
+    scripts.save_draft(draft, upload_id)
+    with pytest.raises(ValueError, match="local-only"):
+        scripts.confirm_rights(upload_id, "claimed license")
+    with pytest.raises(ValueError, match="usage rights"):
+        scripts.publish(script.script_id)
+    with store.connect() as db:
+        row = db.execute("SELECT authorized_at,distribution_scope FROM script_uploads WHERE upload_id=?",
+                         (upload_id,)).fetchone()
+    assert row["authorized_at"] is None
+    assert row["distribution_scope"] == "local_only"

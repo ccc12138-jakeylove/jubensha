@@ -53,7 +53,7 @@ def judge_submission(script: Script, state: GameState,
     culprit_events = {event.event_id for event in script.truth_events
                       if culprits.intersection(event.actor_ids)}
     culprit_secrets = {key for key, secret in script.secrets.items()
-                       if secret.owner_role_id in culprits}
+                       if secret.owner_role_id in culprits and secret.is_crime_secret}
     motive_terms = text_terms(" ".join(
         goal for role_id in culprits for goal in script.characters[role_id].private_goals))
     player_terms = text_terms(state.vote_motive)

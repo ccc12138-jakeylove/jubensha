@@ -92,7 +92,10 @@ def _choose_vote(script: Script, store: EventStore, game_id: str, persona: Perso
                  model_driven: bool, fallback_role_id: str) -> tuple[str, str, list[str]]:
     state = store.load(game_id, script.acts[0].search_points_budget)
     owned = list(dict.fromkeys(state.public_clue_ids + next(iter(state.seats.values())).private_clue_ids))
-    clue_text = {key: script.clues[key].surface_text for key in owned}
+    clue_text = {
+        key: (f"在{script.locations[script.clues[key].location_id].display_name}发现"
+              f"{script.clues[key].display_name}：{script.clues[key].surface_text}")
+        for key in owned}
     if model_driven and configured():
         public_dialogue = [event.payload.get("text", "") for event in store.events(game_id)
                            if event.type in (EventType.PLAYER_INPUT, EventType.NPC_SPEECH)
@@ -177,7 +180,12 @@ def simulate_game(script: Script, store: EventStore, persona: Persona,
                             else _question(persona, script, store, game_id, model_driven))
                 play("talk", role_id=role_id, text=question)
             if persona != "meta" or model_driven:
-                searches = 1 if not model_driven else (3 if persona in ("speedrun", "aggressive") else 2)
+                budget = next(iter(store.load(game_id, act.search_points_budget).seats.values())).search_points
+                if not model_driven:
+                    searches = 1
+                else:
+                    divisor = {"aggressive": 5, "passive": 7, "meta": 8, "speedrun": 12}[persona]
+                    searches = min(budget, max(2, (len(script.clues) + divisor - 1) // divisor))
                 first_choice = _choose_search(script, store, game_id, persona, model_driven)
                 if first_choice:
                     play("enter_search")

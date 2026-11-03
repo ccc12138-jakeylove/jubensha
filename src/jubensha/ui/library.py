@@ -1,4 +1,5 @@
 import json
+from pathlib import Path
 from uuid import uuid4
 
 import streamlit as st
@@ -34,6 +35,17 @@ def _set_field_value(ir: dict, path: str, value) -> dict:
         identifier = "event_id" if root == "truth_events" else "act_id"
         updated[root] = [value if item.get(identifier) == item_id else item
                          for item in collection]
+    return updated
+
+
+def _set_approvals(ir: dict, role_id: str, approvals: dict[str, bool]) -> dict:
+    updated = dict(ir)
+    knowledge = dict(ir["knowledge"])
+    role = dict(knowledge[role_id])
+    role["statements"] = [item | {"approved": approvals.get(item["statement_id"], item["approved"])}
+                          for item in role.get("statements", [])]
+    knowledge[role_id] = role
+    updated["knowledge"] = knowledge
     return updated
 
 
@@ -92,6 +104,20 @@ def show_review(scripts: ScriptStore, draft_id: str) -> None:
         return
     st.title(draft["title"])
     st.caption(draft["status"])
+    if draft["status"] == "draft" and draft.get("source_upload_id"):
+        with scripts.events.connect() as db:
+            rights = db.execute("SELECT authorized_at,rights_source,distribution_scope FROM script_uploads WHERE upload_id=?",
+                                (draft["source_upload_id"],)).fetchone()
+        if rights and rights["distribution_scope"] == "local_only":
+            st.warning("此剧本仅限本地验证，不能确认发行授权或发布。")
+        elif rights and not rights["authorized_at"]:
+            st.warning("此草稿的改编与使用授权尚未确认")
+            confirmed = st.checkbox("我确认拥有此剧本的改编与使用授权", key=f"rights_{draft_id}")
+            source = st.text_input("授权依据", key=f"rights_source_{draft_id}")
+            if st.button("确认授权", disabled=not confirmed or not source.strip()):
+                scripts.confirm_rights(draft["source_upload_id"], source)
+                scripts.audit("author", "confirm_rights", draft_id, source)
+                st.rerun()
     provenance_items = draft["ir"].get("provenance", {})
     fields = []
     for key in draft["ir"]:
@@ -167,6 +193,27 @@ def show_review(scripts: ScriptStore, draft_id: str) -> None:
                 if draft["status"] == "draft" and st.button("回退到此版本", key=f"rollback_{revision['revision_id']}"):
                     scripts.rollback(draft_id, revision["revision_id"])
                     st.rerun()
+    statement_roles = [role_id for role_id, knowledge in draft["ir"].get("knowledge", {}).items()
+                       if isinstance(knowledge, dict) and knowledge.get("statements")]
+    if draft["status"] == "draft" and statement_roles:
+        with st.expander("角色陈述校对"):
+            role_id = st.selectbox("角色", statement_roles,
+                                   format_func=lambda key: draft["ir"]["characters"][key]["display_name"])
+            statements = draft["ir"]["knowledge"][role_id]["statements"]
+            approvals = {}
+            for item in statements:
+                key = f"statement_{draft_id}_{item['statement_id']}"
+                approvals[item["statement_id"]] = st.checkbox(
+                    item["text"], value=bool(item["approved"]), key=key)
+                if item.get("source_span"):
+                    start, end = item["source_span"]
+                    st.caption(f"{Path(item['source_doc']).name} · {start}:{end}")
+            if st.button("保存角色陈述"):
+                updated = _set_approvals(draft["ir"], role_id, approvals)
+                scripts.update_ir(draft_id, json.dumps(updated, ensure_ascii=False))
+                for item in statements:
+                    st.session_state.pop(f"statement_{draft_id}_{item['statement_id']}", None)
+                st.rerun()
     report = draft["ir"].get("linter_report")
     if report:
         st.subheader("质检报告")

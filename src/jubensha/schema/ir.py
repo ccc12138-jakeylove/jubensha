@@ -96,6 +96,7 @@ class Secret(IRModel):
     leak_policy: Literal["deny", "deflect", "lie", "partial"]
     forbidden_claims: list[tuple[str, str, str]]
     lie_script: list[LieTurn] | None
+    is_crime_secret: bool = False
 
 
 class FalseBelief(IRModel):
@@ -105,12 +106,21 @@ class FalseBelief(IRModel):
     refuted_by_clue_ids: list[str]
 
 
+class KnowledgeStatement(IRModel):
+    statement_id: str
+    text: str
+    approved: bool = False
+    source_doc: str | None = None
+    source_span: tuple[int, int] | None = None
+
+
 class KnowledgeSlice(IRModel):
     role_id: str
     knows_event_ids: list[str]
     knows_clue_ids: list[str]
     false_beliefs: list[FalseBelief]
     forbidden_topics: list[str]
+    statements: list[KnowledgeStatement] = Field(default_factory=list)
 
 
 class Relationship(IRModel):

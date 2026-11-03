@@ -7,5 +7,6 @@ eval_report.md
 judge_review.csv
 probe_review.csv
 npc_review.csv
+local_reviews/
 __pycache__/
 .pytest_cache/

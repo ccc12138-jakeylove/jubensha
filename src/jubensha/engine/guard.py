@@ -83,6 +83,7 @@ def check_npc_output(script: Script, perception: PerceptionView, response: str,
         "public": perception.public_summary,
         "events": perception.known_events,
         "clues": perception.known_clues,
+        "statements": perception.known_statements,
         "beliefs": perception.false_beliefs,
         "lie_cues": perception.lie_cues,
     }, ensure_ascii=False)

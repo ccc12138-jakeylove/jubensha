@@ -236,7 +236,7 @@ def render_report(report: EvalReport, title: str) -> str:
              f"| p95 延迟 | {metrics.p95_latency_ms if metrics.p95_latency_ms is not None else '未测'} ms |",
              f"| 成本 | {metrics.cost_usd if metrics.cost_usd is not None else '未测'} USD |",
              f"| 抽样 judge 均分 | {metrics.judge_mean if metrics.judge_mean is not None else '未测'} |",
-             "", f"探针数：{report.probe_count}；工程门禁：{'通过' if report.gate_passed else '失败'}；模型质量验收：{'待人工校准' if metrics.model_evaluated else '未测'}。"]
+             "", f"探针数：{report.probe_count}；{'模型回归门禁' if metrics.model_evaluated else '结构门禁'}：{'通过' if report.gate_passed else '失败'}；模型质量验收：{'待人工校准' if metrics.model_evaluated else '未测'}。"]
     lines.extend(["", "| 策略 | 局数 | 通关 | 主动发言不足两次 |",
                   "|---|---:|---:|---:|"])
     for persona in PERSONAS:

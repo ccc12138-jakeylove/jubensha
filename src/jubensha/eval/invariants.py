@@ -22,7 +22,8 @@ def check_invariants(script: Script, events: list[GameEvent]) -> list[str]:
             if knowledge is None:
                 failures.append(f"unknown NPC role at seq {event.seq}")
             elif any(reference not in
-                     (set(knowledge.knows_event_ids) | set(knowledge.knows_clue_ids) | public_clues)
+                     (set(knowledge.knows_event_ids) | set(knowledge.knows_clue_ids) | public_clues
+                      | {item.statement_id for item in knowledge.statements if item.approved})
                      for reference in citations):
                 failures.append(f"unauthorized NPC citation at seq {event.seq}")
         if event.type == EventType.PHASE_CHANGE:

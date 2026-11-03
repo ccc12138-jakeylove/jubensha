@@ -50,6 +50,12 @@ class IRUpdate(BaseModel):
     ir: dict
 
 
+class RightsConfirmation(BaseModel):
+    authorized: bool
+    rights_source: str
+    rights_contact: str = ""
+
+
 class EvalRequest(BaseModel):
     script_id: str | None = None
     games_per_persona: int = Field(default=5, ge=1, le=20)
@@ -249,6 +255,25 @@ def create_app(db_path: str | None = None, fixture_path: str | None = None) -> F
         except ValueError as exc:
             raise HTTPException(422, str(exc)) from exc
         return {"script_id": script_id, "status": "archived"}
+
+    @api.post("/api/v2/scripts/{script_id}/rights")
+    def confirm_script_rights_v2(script_id: str, body: RightsConfirmation,
+                                 authorization: str | None = Header(default=None)):
+        require_token(authorization)
+        if not body.authorized:
+            raise HTTPException(422, "script usage rights must be confirmed")
+        try:
+            draft = scripts.get_draft(script_id)
+            if not draft["source_upload_id"]:
+                raise ValueError("script has no uploaded source")
+            scripts.confirm_rights(draft["source_upload_id"], body.rights_source,
+                                   body.rights_contact)
+        except KeyError as exc:
+            raise HTTPException(404, "script or upload not found") from exc
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from exc
+        scripts.audit("author", "confirm_rights", script_id, body.rights_source)
+        return {"script_id": script_id, "rights_confirmed": True}
 
     @api.delete("/api/v2/scripts/{script_id}")
     def delete_draft_v2(script_id: str, authorization: str | None = Header(default=None)):

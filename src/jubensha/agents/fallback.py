@@ -10,6 +10,8 @@ def _bigrams(text: str) -> set[str]:
 
 def safe_response_with_source(perception: PerceptionView, question: str) -> tuple[str, list[str]]:
     candidates = [(item["surface_text"], [item["clue_id"]]) for item in perception.known_clues]
+    candidates += [(item["text"], [item["statement_id"]])
+                   for item in perception.known_statements]
     candidates += [(observation, [event["event_id"]]) for event in perception.known_events
                    for observation in event["observable"]]
     known_events = {item["event_id"] for item in perception.known_events}

@@ -107,6 +107,19 @@ def test_judge_uses_only_the_accusing_seat_evidence(script, tmp_path):
     assert result.outcomes["key_evidence"] and result.supporting_evidence_ids == ["C04"]
 
 
+def test_background_secret_does_not_count_as_key_crime_evidence(script, state):
+    script = script.model_copy(deep=True)
+    script.clues["C08"].reveals_event_ids = []
+    script.clues["C08"].reveals_secret_ids = ["S01"]
+    state.vote_role_id = "lin_suyun"
+    state.vote_motive = "欠条"
+    state.vote_evidence_ids = ["C08"]
+    state.public_clue_ids.append("C08")
+    assert not judge_submission(script, state).outcomes["key_evidence"]
+    script.secrets["S01"].is_crime_secret = True
+    assert judge_submission(script, state).outcomes["key_evidence"]
+
+
 def test_memory_store_hook_accepts_alternate_backend(script, state):
     class InMemorySummaries:
         def __init__(self):

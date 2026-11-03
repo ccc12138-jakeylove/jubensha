@@ -60,6 +60,7 @@ class ScriptStore:
                 },
                 "script_uploads": {
                     "authorized_at": "TEXT", "rights_source": "TEXT", "rights_contact": "TEXT",
+                    "distribution_scope": "TEXT NOT NULL DEFAULT 'pending'",
                 },
                 "script_versions": {
                     "parent_version": "TEXT", "diff_summary": "TEXT", "created_by": "TEXT",
@@ -95,16 +96,48 @@ class ScriptStore:
                        (script.script_id, version, ir_json, "fixture"))
 
     def save_upload(self, filename: str, content: bytes,
-                    rights_source: str = "author confirmed", rights_contact: str = "") -> str:
+                    rights_source: str = "author confirmed", rights_contact: str = "",
+                    rights_confirmed: bool = True,
+                    distribution_scope: str | None = None) -> str:
         if not rights_source.strip():
             raise ValueError("rights source is required")
         if len(content) > 10_000_000:
             raise ValueError("document exceeds 10 MB")
+        scope = distribution_scope or ("authorized" if rights_confirmed else "pending")
+        if scope not in {"authorized", "pending", "local_only"} or (rights_confirmed and scope != "authorized"):
+            raise ValueError("invalid distribution scope")
         upload_id = uuid4().hex
         with self.events.connect() as db:
-            db.execute("INSERT INTO script_uploads (upload_id,filename,content,authorized_at,rights_source,rights_contact) VALUES (?,?,?,CURRENT_TIMESTAMP,?,?)",
-                       (upload_id, filename, content, rights_source.strip(), rights_contact.strip()))
+            db.execute("INSERT INTO script_uploads (upload_id,filename,content,authorized_at,rights_source,rights_contact,distribution_scope) VALUES (?,?,?,CASE WHEN ? THEN CURRENT_TIMESTAMP ELSE NULL END,?,?,?)",
+                       (upload_id, filename, content, int(rights_confirmed),
+                        rights_source.strip(), rights_contact.strip(), scope))
         return upload_id
+
+    def confirm_rights(self, upload_id: str, rights_source: str,
+                       rights_contact: str = "") -> None:
+        if not rights_source.strip():
+            raise ValueError("rights source is required")
+        with self.events.connect() as db:
+            row = db.execute("SELECT distribution_scope FROM script_uploads WHERE upload_id=?", (upload_id,)).fetchone()
+            if row is None:
+                raise KeyError(upload_id)
+            if row["distribution_scope"] == "local_only":
+                raise ValueError("local-only material cannot be confirmed for publication")
+            cursor = db.execute("UPDATE script_uploads SET authorized_at=CURRENT_TIMESTAMP,rights_source=?,rights_contact=?,distribution_scope='authorized' WHERE upload_id=?",
+                                (rights_source.strip(), rights_contact.strip(), upload_id))
+            if cursor.rowcount != 1:
+                raise KeyError(upload_id)
+
+    def restrict_to_local(self, script_id: str) -> None:
+        with self.events.connect() as db:
+            row = db.execute("SELECT source_upload_id FROM scripts WHERE script_id=? AND status='draft'",
+                             (script_id,)).fetchone()
+            if row is None or not row["source_upload_id"]:
+                raise ValueError("uploaded draft required")
+            db.execute("UPDATE script_uploads SET distribution_scope='local_only',authorized_at=NULL,rights_source='local verification only' WHERE upload_id=?",
+                       (row["source_upload_id"],))
+            db.execute("INSERT INTO audit_log (actor,action,target,detail) VALUES ('local','restrict_to_local',?,'user specified local validation only')",
+                       (script_id,))
 
     def get_upload(self, upload_id: str) -> tuple[str, bytes]:
         with self.events.connect() as db:
@@ -282,9 +315,9 @@ class ScriptStore:
             raise ValueError("review items must be resolved")
         if draft["source_upload_id"]:
             with self.events.connect() as db:
-                rights = db.execute("SELECT authorized_at FROM script_uploads WHERE upload_id=?",
+                rights = db.execute("SELECT authorized_at,distribution_scope FROM script_uploads WHERE upload_id=?",
                                     (draft["source_upload_id"],)).fetchone()
-            if rights is None or not rights["authorized_at"]:
+            if rights is None or not rights["authorized_at"] or rights["distribution_scope"] != "authorized":
                 raise ValueError("script usage rights are not confirmed")
         with self.events.connect() as db:
             db.execute("UPDATE scripts SET status='published',published_at=CURRENT_TIMESTAMP WHERE script_id=?", (script_id,))

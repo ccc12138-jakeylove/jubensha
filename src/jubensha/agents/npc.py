@@ -30,6 +30,11 @@ def _fallback_response(perception: PerceptionView, question: str) -> NpcResponse
 
 
 def _grounded_line(perception: PerceptionView, source_id: str, question: str) -> NpcResponse:
+    for statement in perception.known_statements:
+        if statement["statement_id"] == source_id:
+            return (NpcResponse(text=f"我知道：{statement['text']}", evidence_ids=[source_id])
+                    if _related(question, statement["text"])
+                    else _fallback_response(perception, question))
     for clue in perception.known_clues:
         if clue["clue_id"] == source_id:
             return (NpcResponse(text=f"我只看到：{clue['surface_text']}", evidence_ids=[source_id])
@@ -82,6 +87,7 @@ def respond(perception: PerceptionView, question: str,
     if os.getenv("NPC_GENERATION_MODE", "grounded") == "grounded":
         choices = ["profile", "public", "none"]
         choices += [item["clue_id"] for item in perception.known_clues]
+        choices += [item["statement_id"] for item in perception.known_statements]
         choices += [item["event_id"] for item in perception.known_events if item["observable"]]
         choices += [f"belief_{index}" for index in range(len(perception.false_beliefs))]
         context.insert(0, {"role": "system", "content": (

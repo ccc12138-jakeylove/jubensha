@@ -16,8 +16,15 @@ const path = require('path');
   ]) {
     const page = await browser.newPage({ viewport, deviceScaleFactor: 1 });
     await page.goto(url, { waitUntil: 'domcontentloaded' });
-    await page.getByRole('heading', { name: review ? '雾港谜案' : '剧本库', exact: true }).waitFor({ timeout: 30000 });
+    await page.getByRole('heading', {
+      name: review ? (process.env.SMOKE_REVIEW_TITLE || '雾港谜案') : '剧本库', exact: true,
+    }).waitFor({ timeout: 30000 });
     await page.getByRole('button', { name: review ? '保存字段' : '开局', exact: true }).waitFor({ timeout: 30000 });
+    if (review && process.env.SMOKE_STATEMENTS === '1') {
+      await page.getByText('角色陈述校对', { exact: true }).click();
+      await page.getByRole('checkbox').first().waitFor({ timeout: 30000 });
+      if (await page.getByRole('checkbox').count() < 10) throw new Error('statement review did not render');
+    }
     const overflow = await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth + 2);
     if (overflow) throw new Error(`${name} has horizontal overflow`);
     const screenshot = path.join(os.tmpdir(), `jubensha-v2-${review ? 'review-' : ''}${name}.png`);
