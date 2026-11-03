@@ -23,6 +23,9 @@ def main() -> None:
         except KeyError:
             continue
         updated = merge_statement_candidates(current["ir"], extracted.ir)
+        updated["search_mode"] = extracted.ir["search_mode"]
+        for clue_id, clue in extracted.ir["clues"].items():
+            updated["clues"][clue_id]["search_label"] = clue["search_label"]
         updated["parser_meta"]["source_files"] = extracted.ir["parser_meta"]["source_files"]
         scripts.update_ir(script_id, json.dumps(updated, ensure_ascii=False))
         scripts.refresh_draft_source(script_id, extracted.source_text)

@@ -108,11 +108,11 @@ def show_review(scripts: ScriptStore, draft_id: str) -> None:
         try:
             script = scripts.load_preview(draft_id)
             game_id = uuid4().hex
-            scripts.events.create_game(game_id, script.script_id, script.acts[0].act_id)
+            scripts.events.create_game(game_id, script.script_id, script.acts[0].act_id,
+                                       is_preview=True)
             scripts.audit("author", "preview_draft", draft_id, game_id)
             st.query_params.clear()
             st.query_params["game"] = game_id
-            st.query_params["preview"] = "1"
             st.rerun()
         except Exception as exc:
             st.error(str(exc))

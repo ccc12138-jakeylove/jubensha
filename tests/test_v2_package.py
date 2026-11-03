@@ -24,6 +24,7 @@ def test_structured_package_preserves_roles_clues_and_source_spans(tmp_path):
     draft = compile_package(write_package(tmp_path))
     assert not draft.valid
     assert len(draft.ir["characters"]) == 2 and len(draft.ir["clues"]) == 2
+    assert all(clue["search_label"].startswith("待搜查目标") for clue in draft.ir["clues"].values())
     assert len(draft.ir["acts"]) == 1
     assert "甲" in draft.source_text
     assert draft.ir["provenance"]["characters.R01"]["source_doc"].endswith("人物剧本.json")
@@ -93,3 +94,28 @@ def test_package_statements_keep_act_scope(tmp_path):
     draft = compile_package(write_package(tmp_path, two_acts=True))
     statements = draft.ir["knowledge"]["R01"]["statements"]
     assert {item["act_id"] for item in statements} == {"A01", "A02"}
+
+
+def test_review_can_add_sourced_followup_clue(tmp_path):
+    draft = compile_package(write_package(tmp_path))
+    clue_id = "C999"
+    review = {"script_id": draft.ir["script_id"], "additional_clues": {clue_id: {
+        "clue_id": clue_id, "display_name": "便条背面", "search_label": "检查便条背面",
+        "surface_text": "便条背面有甲的笔迹。", "truth_value": "true",
+        "location_id": "L01", "act_available": ["A01"], "search_cost": 1,
+        "prerequisites": ["C001"], "reveals_event_ids": [], "reveals_secret_ids": [],
+        "visibility": "public", "red_herring": False,
+        "source_quote": "甲在大厅发现了便条"}}}
+    updated = apply_review(draft.ir, review, draft.source_text)
+    assert updated["clues"][clue_id]["prerequisites"] == ["C001"]
+    assert updated["provenance"][f"clues.{clue_id}"]["source_doc"].endswith("_真相_GM专用.txt")
+
+
+def test_review_approves_only_named_sourced_role_statements(tmp_path):
+    draft = compile_package(write_package(tmp_path))
+    selected = draft.ir["knowledge"]["R01"]["statements"][0]["statement_id"]
+    updated = apply_review(draft.ir, {"script_id": draft.ir["script_id"],
+                                      "approved_statement_ids": {"R01": [selected]}}, draft.source_text)
+    assert [item["statement_id"] for item in updated["knowledge"]["R01"]["statements"]
+            if item["approved"]] == [selected]
+    assert not any(item["approved"] for item in updated["knowledge"]["R02"]["statements"])

@@ -108,11 +108,12 @@ def compile_package(folder: Path, *, genre: str = "本格") -> CompilationDraft:
                                   "description": location_name, "searchable": True,
                                   "capacity_per_act": max(1, len(entries)),
                                   "act_availability": act_ids, "connected_to": []}
-        for clue_name, item, visibility in entries:
+        for target_index, (clue_name, item, visibility) in enumerate(entries, 1):
             surface = item if isinstance(item, str) else json.dumps(item, ensure_ascii=False)
             clue_id = f"C{len(clues) + 1:03d}"
             clues[clue_id] = {"clue_id": clue_id,
                               "display_name": clue_name or surface.splitlines()[0][:24] or clue_id,
+                              "search_label": f"待搜查目标 {target_index}",
                               "surface_text": surface, "truth_value": "true",
                               "location_id": location_id, "act_available": act_ids,
                               "search_cost": 1, "prerequisites": [],
@@ -133,7 +134,7 @@ def compile_package(folder: Path, *, genre: str = "本格") -> CompilationDraft:
             for index, (act_id, name) in enumerate(zip(act_ids, act_names), 1)]
     tags = content_tags(source_text)
     ir = {"script_id": script_id, "title": title, "genre": genre, "ir_version": "1.1",
-          "tone": "悬疑", "seat_range": [1, len(roles)],
+          "tone": "悬疑", "seat_range": [1, len(roles)], "search_mode": "location_bundle",
           "win_condition": {"type": "accuse", "required": ["culprit", "motive", "key_evidence"],
                             "partial_credit": True},
           "acts": acts, "characters": characters, "truth_events": [], "clues": clues,
@@ -211,10 +212,36 @@ def apply_review(ir: dict, review: dict, source_text: str = "") -> dict:
         clue.update(review.get("clue_defaults", {}))
     for clue_id, patch in review.get("clue_links", {}).items():
         updated["clues"][clue_id].update(patch)
+    for clue_id, item in review.get("additional_clues", {}).items():
+        clue = dict(item)
+        quote = clue.pop("source_quote", None)
+        if quote and source_text:
+            start = source_text.find(quote)
+            if start < 0:
+                raise ValueError(f"source quote for {clue_id} was not found")
+            key = f"clues.{clue_id}"
+            updated["provenance"][key] = {
+                "field_path": key, "source_doc": updated["parser_meta"]["source_files"][0],
+                "source_span": [start, start + len(quote)], "confidence": 0.7,
+            }
+        updated["clues"][clue_id] = clue
+        location_id = clue["location_id"]
+        updated["locations"][location_id]["capacity_per_act"] = max(
+            updated["locations"][location_id]["capacity_per_act"],
+            sum(candidate["location_id"] == location_id for candidate in updated["clues"].values()))
     for location_id, patch in review.get("locations", {}).items():
         updated["locations"].setdefault(location_id, {}).update(patch)
     for role_id, patch in review.get("knowledge", {}).items():
         updated["knowledge"][role_id].update(patch)
+    for role_id, statement_ids in review.get("approved_statement_ids", {}).items():
+        statements = updated["knowledge"][role_id]["statements"]
+        known_ids = {item["statement_id"] for item in statements}
+        if not set(statement_ids).issubset(known_ids):
+            raise ValueError(f"unknown statement for {role_id}")
+        for item in statements:
+            if item["statement_id"] in statement_ids and not item.get("source_span"):
+                raise ValueError(f"approved statement {item['statement_id']} lacks a source")
+            item["approved"] = item["statement_id"] in statement_ids
     updated.pop("linter_report", None)
     script = Script.model_validate(updated)
     report = lint_script(script)

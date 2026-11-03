@@ -59,6 +59,9 @@ class EventStore:
                                       "route_reason": "TEXT", "cache_hit": "INTEGER DEFAULT 0"}.items():
                 if column not in columns:
                     db.execute(f"ALTER TABLE llm_traces ADD COLUMN {column} {data_type}")
+            game_columns = {row[1] for row in db.execute("PRAGMA table_info(games)")}
+            if "is_preview" not in game_columns:
+                db.execute("ALTER TABLE games ADD COLUMN is_preview INTEGER NOT NULL DEFAULT 0")
             db.execute("INSERT OR IGNORE INTO game_seats (game_id,seat_id,role_id) SELECT game_id,seat_id,NULL FROM games")
 
     def connect(self):
@@ -67,10 +70,11 @@ class EventStore:
         db.execute("PRAGMA busy_timeout=30000")
         return db
 
-    def create_game(self, game_id: str, script_id: str, act_id: str, seat_id: str = "seat_1") -> None:
+    def create_game(self, game_id: str, script_id: str, act_id: str,
+                    seat_id: str = "seat_1", *, is_preview: bool = False) -> None:
         with self.connect() as db:
-            db.execute("INSERT INTO games (game_id,script_id,act_id,seat_id) VALUES (?,?,?,?)",
-                       (game_id, script_id, act_id, seat_id))
+            db.execute("INSERT INTO games (game_id,script_id,act_id,seat_id,is_preview) VALUES (?,?,?,?,?)",
+                       (game_id, script_id, act_id, seat_id, int(is_preview)))
             db.execute("INSERT INTO game_seats VALUES (?,?,NULL)", (game_id, seat_id))
 
     def create_game_idempotent(self, script_id: str, act_id: str, key: str,
@@ -139,6 +143,13 @@ class EventStore:
             if row is None:
                 raise KeyError(game_id)
             return row[0]
+
+    def is_preview_game(self, game_id: str) -> bool:
+        with self.connect() as db:
+            row = db.execute("SELECT is_preview FROM games WHERE game_id=?", (game_id,)).fetchone()
+        if row is None:
+            raise KeyError(game_id)
+        return bool(row[0])
 
     def load(self, game_id: str, search_budget: int, private_budget: int = 2,
              up_to_seq: int | None = None) -> GameState:

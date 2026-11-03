@@ -6,7 +6,7 @@ from uuid import uuid4
 from pydantic import BaseModel, ConfigDict, Field
 
 from jubensha.engine.fsm import Phase
-from jubensha.agents.referee import judge_submission, text_terms
+from jubensha.agents.referee import judge_submission
 from jubensha.engine.loop import build_turn_graph, run_turn
 from jubensha.engine.search import available_clues
 from jubensha.eval.invariants import check_invariants
@@ -57,26 +57,25 @@ def _choose_search(script: Script, store: EventStore, game_id: str,
     state = store.load(game_id, script.acts[0].search_points_budget)
     available = [(location_id, clue) for location_id in script.locations
                  for clue in available_clues(script, state, location_id)]
+    if script.search_mode == "location_bundle":
+        available = list({location_id: (location_id, clue) for location_id, clue in available}.values())
     if not available:
         return None
-    visited = {event.payload.get("location_id") for event in store.events(game_id)
-               if event.type == EventType.CLUE_FOUND
-               and event.payload.get("act_id", state.act_id) == state.act_id}
-    fresh_locations = [item for item in available if item[0] not in visited]
-    if fresh_locations:
-        available = fresh_locations
     if model_driven and configured():
         options = [{"location_id": location_id,
                     "location": script.locations[location_id].description,
-                    "clue_id": clue.clue_id, "target": clue.display_name,
-                    "cost": clue.search_cost} for location_id, clue in available]
+                    "clue_id": clue.clue_id, "target": clue.search_label or clue.display_name,
+                    "cost": 1 if script.search_mode == "location_bundle" else clue.search_cost}
+                   for location_id, clue in available]
         try:
             choice = _model_json(store, game_id, "search_plan", persona,
                                  "为了最终说明凶手、动机和关键证据，选择一个最值得搜查的目标；先补当前证据链缺失的维度。返回location_id和clue_id。",
                                  {"search_points": next(iter(state.seats.values())).search_points,
                                   "options": options,
-                                  "found": [script.clues[key].surface_text for key in
-                                            state.public_clue_ids + next(iter(state.seats.values())).private_clue_ids]})
+                                  "found": [{"location": script.locations[script.clues[key].location_id].display_name,
+                                             "text": script.clues[key].surface_text}
+                                            for key in state.public_clue_ids
+                                            + next(iter(state.seats.values())).private_clue_ids]})
             for location_id, clue in available:
                 if location_id == choice.get("location_id") and clue.clue_id == choice.get("clue_id"):
                     return location_id, clue
@@ -84,8 +83,8 @@ def _choose_search(script: Script, store: EventStore, game_id: str,
             pass
     documentary = ("欠", "账", "信", "合同", "证明", "证书", "口供", "遗嘱")
     return min(available, key=lambda pair: (
-        pair[1].search_cost,
-        -any(token in pair[1].display_name for token in documentary)))
+        1 if script.search_mode == "location_bundle" else pair[1].search_cost,
+        -any(token in (pair[1].search_label or pair[1].display_name) for token in documentary)))
 
 
 def _choose_vote(script: Script, store: EventStore, game_id: str, persona: Persona,
@@ -105,25 +104,12 @@ def _choose_vote(script: Script, store: EventStore, game_id: str, persona: Perso
                                  "提交推理，返回role_id、motive、evidence_ids三个字段。motive要说明嫌疑人希望改变什么处境，并指出支撑它的线索；不要把作案方式当动机。欠条须看清落款是谁、谁欠谁，持有欠条与取得现金是不同目的；不要从欠债直接推出杀人取钱。evidence_ids只能从已获线索中选。被指认者必须与所选线索直接相关；亲属或财务关系可能只是误导，还要比较作案条件。",
                                  {"characters": {key: value.public_profile for key, value in script.characters.items()},
                                   "clues": clue_text, "dialogue": public_dialogue})
-            if choice.get("role_id") in script.characters and isinstance(choice.get("motive"), str):
+            if (choice.get("role_id") in script.characters
+                    and isinstance(choice.get("motive"), str)
+                    and choice["motive"].strip()):
                 evidence = choice.get("evidence_ids", [])
-                if isinstance(evidence, list) and all(key in clue_text for key in evidence):
-                    public_terms = text_terms(" ".join(
-                        [act.public_narrative for act in script.acts]
-                        + [character.public_profile for character in script.characters.values()]))
-                    clue_terms = text_terms(" ".join(clue_text[key] for key in evidence))
-                    named_support = {key: sum(script.characters[key].display_name in clue_text[clue_id]
-                                              for clue_id in evidence) for key in script.characters}
-                    role_supported = (named_support[choice["role_id"]] > 0
-                                      or not any(named_support.values()))
-                    all_support = {key: sum(script.characters[key].display_name in text
-                                            for text in clue_text.values()) for key in script.characters}
-                    all_clues_considered = (all_support[choice["role_id"]] > 0
-                                            or not any(all_support.values()))
-                    if (evidence and role_supported
-                            and all_clues_considered
-                            and text_terms(choice["motive"]).intersection(clue_terms - public_terms)):
-                        return choice["role_id"], choice["motive"][:400], evidence
+                if isinstance(evidence, list) and evidence and all(key in clue_text for key in evidence):
+                    return choice["role_id"], choice["motive"][:400], evidence
         except (ValueError, KeyError):
             pass
     if model_driven and clue_text:
@@ -195,7 +181,10 @@ def simulate_game(script: Script, store: EventStore, persona: Persona,
                         if choice is None:
                             break
                         location_id, clue = choice
-                        play("search", location_id=location_id, clue_id=clue.clue_id)
+                        if script.search_mode == "location_bundle":
+                            play("search_bundle", location_id=location_id)
+                        else:
+                            play("search", location_id=location_id, clue_id=clue.clue_id)
                     play("leave_search")
             play("enter_confront")
             if model_driven:
@@ -231,6 +220,14 @@ def simulate_game(script: Script, store: EventStore, persona: Persona,
     invariant_failures = check_invariants(script, events)
     if invariant_failures:
         attributions.append("invariant")
+    reference_path = set(script.linter_report.solvability.optimal_path_clue_ids) if script.linter_report else set()
+    found = set(state.public_clue_ids + next(iter(state.seats.values())).private_clue_ids)
+    if reference_path and not reference_path.issubset(found):
+        attributions.append("reference_path_not_found")
+    elif reference_path and not reference_path.issubset(state.vote_evidence_ids):
+        attributions.append("reference_path_not_submitted")
+    elif reference_path and not culprit_correct:
+        attributions.append("wrong_culprit_despite_reference_path")
     return SimResult(
         game_id=game_id, persona=persona, completed=state.phase == Phase.END,
         win=judgment.passed, culprit_correct=culprit_correct,

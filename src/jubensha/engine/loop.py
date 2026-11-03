@@ -14,7 +14,7 @@ from jubensha.engine.fsm import Phase, transition
 from jubensha.engine.claims import normalize_probe
 from jubensha.engine.guard import blocked_input, check_npc_output, semantic_leak_check
 from jubensha.engine.perception import build_perception
-from jubensha.engine.search import select_clue
+from jubensha.engine.search import available_clues, select_clue
 from jubensha.schema.events import EventType, GameEvent
 from jubensha.schema.claims import Claim
 from jubensha.schema.ir import Script
@@ -33,6 +33,7 @@ class TurnState(TypedDict, total=False):
     route: str
     reply: str
     clue_id: str
+    bundle_clue_ids: list[str]
     target_phase: str
     npc_question: str
     npc_is_lie: bool
@@ -64,7 +65,8 @@ def build_turn_graph(script: Script, store: EventStore, observer=None):
         valid = {
             "begin": {Phase.ENTRY}, "read_done": {Phase.READ},
             "enter_search": {Phase.ACT_OPEN}, "leave_search": {Phase.SEARCH},
-            "search": {Phase.SEARCH}, "talk": {Phase.ACT_OPEN},
+            "search": {Phase.SEARCH}, "search_bundle": {Phase.SEARCH},
+            "talk": {Phase.ACT_OPEN},
             "enter_private": {Phase.ACT_OPEN}, "private_talk": {Phase.PRIVATE},
             "leave_private": {Phase.PRIVATE},
             "enter_confront": {Phase.ACT_OPEN}, "leave_confront": {Phase.CONFRONT},
@@ -80,6 +82,7 @@ def build_turn_graph(script: Script, store: EventStore, observer=None):
             "read_done": Phase.ACT_OPEN, "talk": Phase.ACT_OPEN,
             "leave_search": Phase.ACT_OPEN,
             "enter_search": Phase.SEARCH, "search": Phase.SEARCH,
+            "search_bundle": Phase.SEARCH,
             "leave_private": Phase.ACT_OPEN,
             "enter_private": Phase.PRIVATE, "private_talk": Phase.PRIVATE,
             "leave_confront": Phase.ACT_OPEN,
@@ -103,9 +106,13 @@ def build_turn_graph(script: Script, store: EventStore, observer=None):
             raise ValueError("尚有下一幕")
         if action == "next_act" and act == ordered_acts[-1]:
             raise ValueError("已经是最后一幕")
+        if action == "search_bundle" and script.search_mode != "location_bundle":
+            raise ValueError("this script does not use location search bundles")
+        if action == "search" and script.search_mode == "location_bundle":
+            raise ValueError("this script searches by location")
         data["route"] = ("guard" if data["input_blocked"] and action in {"talk", "private_talk", "confront_talk"}
                          else "npc" if action in {"talk", "private_talk", "confront_talk"}
-                         else "search" if action == "search" else "dm")
+                         else "search" if action in {"search", "search_bundle"} else "dm")
         return data
 
     def guardrail_in(data: TurnState) -> TurnState:
@@ -157,6 +164,13 @@ def build_turn_graph(script: Script, store: EventStore, observer=None):
 
     def search_evidence(data: TurnState) -> TurnState:
         state = store.load(data["game_id"], script.acts[0].search_points_budget)
+        if data["action"] == "search_bundle":
+            clues = available_clues(script, state, data["location_id"], data["actor_seat_id"])
+            if not clues:
+                raise ValueError("此地点目前没有可搜查线索")
+            data["bundle_clue_ids"] = [clue.clue_id for clue in clues]
+            data["reply"] = "\n".join(clue.surface_text for clue in clues)
+            return data
         clue = select_clue(script, state, data["location_id"], data["clue_id"],
                            data["actor_seat_id"])
         data["reply"] = clue.surface_text
@@ -285,11 +299,18 @@ def build_turn_graph(script: Script, store: EventStore, observer=None):
                 append(EventType.CLAIM, claim.model_dump() | {"probe": normalize_probe(output["question"])}, output_visible)
             if data.get("director_message"):
                 append(EventType.DM_NARRATION, {"text": data["director_message"], "director_level": 2}, ["*"])
-        elif data["action"] == "search" and data.get("clue_id"):
-            clue = script.clues[data["clue_id"]]
-            append(EventType.CLUE_FOUND, {"clue_id": clue.clue_id, "location_id": clue.location_id,
-                                          "search_cost": clue.search_cost, "act_id": state.act_id},
-                   ["*"] if clue.visibility == "public" else [seat_id], seat_id)
+        elif data["action"] in {"search", "search_bundle"}:
+            clue_ids = data.get("bundle_clue_ids") or [data["clue_id"]]
+            bundle_id = uuid4().hex if data["action"] == "search_bundle" else None
+            for index, clue_id in enumerate(clue_ids):
+                clue = script.clues[clue_id]
+                payload = {"clue_id": clue.clue_id, "location_id": clue.location_id,
+                           "search_cost": (1 if index == 0 else 0) if bundle_id else clue.search_cost,
+                           "act_id": state.act_id}
+                if bundle_id:
+                    payload["bundle_id"] = bundle_id
+                append(EventType.CLUE_FOUND, payload,
+                       ["*"] if clue.visibility == "public" else [seat_id], seat_id)
         elif data["action"] == "vote":
             if data["role_id"] not in script.characters:
                 raise ValueError("unknown accused role")

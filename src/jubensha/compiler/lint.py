@@ -24,6 +24,12 @@ def lint_script(script: Script) -> LinterReport:
         if all(value is not None for value in thresholds) and not thresholds[0] < thresholds[1] < thresholds[2]:
             issue("INVALID_DIRECTOR_THRESHOLDS", "blocker", act.act_id,
                   "导演阈值应按主动发言、提示、关键提示递增")
+    if any(clue_id not in script.clues for clue_id in script.win_condition.motive_evidence_clue_ids):
+        issue("BROKEN_MOTIVE_REFERENCE", "blocker", script.script_id,
+              "动机证据引用了不存在的线索")
+    if bool(script.win_condition.motive_evidence_clue_ids) != bool(script.win_condition.motive_terms):
+        issue("INCOMPLETE_MOTIVE_RUBRIC", "blocker", script.script_id,
+              "动机证据与可接受表述应同时配置")
     if not script.characters or script.seat_range[0] < 1 or script.seat_range[0] > script.seat_range[1]:
         issue("INVALID_CAST", "blocker", script.script_id, "角色或席位范围无效")
     for key, character in script.characters.items():
@@ -141,17 +147,32 @@ def lint_script(script: Script) -> LinterReport:
               "明确唯一真凶，或改用支持多目标的胜利条件")
     culprit_events = {event.event_id for event in script.truth_events
                       if culprits.intersection(event.actor_ids)}
+    culprit_secrets = {key for key, secret in script.secrets.items()
+                       if secret.owner_role_id in culprits and secret.is_crime_secret}
     evidence = [clue_id for clue_id in reachable
-                if culprit_events.intersection(script.clues[clue_id].reveals_event_ids)
-                or any(script.secrets[secret_id].owner_role_id in culprits
-                       and script.secrets[secret_id].is_crime_secret
-                       for secret_id in script.clues[clue_id].reveals_secret_ids
-                       if secret_id in script.secrets)]
+                if ((not culprit_secrets and culprit_events.intersection(script.clues[clue_id].reveals_event_ids))
+                    or culprit_secrets.intersection(script.clues[clue_id].reveals_secret_ids))]
     relevant_clues = set(evidence)
     for clue_id in list(relevant_clues):
         relevant_clues.update(key for key in script.clues[clue_id].prerequisites
                               if key in script.clues)
-    chain_cost = sum(script.clues[key].search_cost for key in relevant_clues)
+    def path_cost(keys: set[str] | list[str]) -> int:
+        if script.search_mode == "location_bundle":
+            selected = set(keys)
+            def visits(clue_id: str, seen: set[str] | None = None) -> int:
+                seen = seen or set()
+                if clue_id in seen:
+                    return 1
+                clue = script.clues[clue_id]
+                earlier = [key for key in clue.prerequisites if key in selected
+                           and script.clues[key].location_id == clue.location_id]
+                return 1 + max((visits(key, seen | {clue_id}) for key in earlier), default=0)
+            return sum(max(visits(key) for key in selected
+                           if script.clues[key].location_id == location_id)
+                       for location_id in {script.clues[key].location_id for key in selected})
+        return sum(script.clues[key].search_cost for key in keys)
+
+    chain_cost = path_cost(relevant_clues)
     total_budget = sum(act.search_points_budget for act in script.acts)
     if chain_cost > total_budget:
         issue("KEY_CHAIN_RESOURCE_RISK", "medium", script.script_id,
@@ -177,8 +198,10 @@ def lint_script(script: Script) -> LinterReport:
                                        + [character.public_profile for character in script.characters.values()]))
     motive_terms = text_terms(" ".join(goal for role_id in culprits
                                        for goal in script.characters[role_id].private_goals)) - public_terms
-    motive_clues = [clue_id for clue_id in reachable
-                    if motive_terms.intersection(text_terms(script.clues[clue_id].surface_text))]
+    motive_clues = ([clue_id for clue_id in script.win_condition.motive_evidence_clue_ids
+                     if clue_id in reachable] if script.win_condition.motive_evidence_clue_ids else
+                    [clue_id for clue_id in reachable
+                     if motive_terms.intersection(text_terms(script.clues[clue_id].surface_text))])
     def clue_context(clue_id: str) -> str:
         clue = script.clues[clue_id]
         location = script.locations.get(clue.location_id)
@@ -201,8 +224,8 @@ def lint_script(script: Script) -> LinterReport:
     if "culprit" in script.win_condition.required and identity_clues:
         candidate_paths = [list(dict.fromkeys(path + prerequisite_path(identity_clue)))
                            for path in candidate_paths for identity_clue in identity_clues]
-    best_path = min(candidate_paths, key=lambda path: sum(script.clues[key].search_cost for key in path)) if candidate_paths else []
-    minimum_cost = sum(script.clues[key].search_cost for key in best_path) if best_path else None
+    best_path = min(candidate_paths, key=path_cost) if candidate_paths else []
+    minimum_cost = path_cost(best_path) if best_path else None
     if minimum_cost is not None and minimum_cost > total_budget:
         issue("BUDGET_UNSOLVABLE", "blocker", script.script_id,
               f"最短关键线索路径需 {minimum_cost} 点，预算仅 {total_budget} 点",

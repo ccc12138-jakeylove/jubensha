@@ -120,6 +120,20 @@ def test_background_secret_does_not_count_as_key_crime_evidence(script, state):
     assert judge_submission(script, state).outcomes["key_evidence"]
 
 
+def test_explicit_motive_rubric_requires_named_evidence_and_reason(script, state):
+    script = script.model_copy(deep=True)
+    script.win_condition.motive_evidence_clue_ids = ["C04"]
+    script.win_condition.motive_terms = ["债务", "欠款"]
+    state.vote_role_id = "lin_suyun"
+    state.vote_motive = "为偿还债务"
+    state.vote_evidence_ids = ["C04"]
+    assert not judge_submission(script, state).outcomes["motive"]
+    state.seats["seat_1"].private_clue_ids.append("C04")
+    assert judge_submission(script, state).outcomes["motive"]
+    state.vote_motive = "只是为了掩盖投毒手法"
+    assert not judge_submission(script, state).outcomes["motive"]
+
+
 def test_memory_store_hook_accepts_alternate_backend(script, state):
     class InMemorySummaries:
         def __init__(self):

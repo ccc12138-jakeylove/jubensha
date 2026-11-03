@@ -52,13 +52,17 @@ def main():
         st.query_params["view"] = "eval"
         st.rerun()
     script_id = store.game_script_id(game_id) if game_id else fixture.script_id
-    if script_id == fixture.script_id:
-        script = fixture
-    elif st.query_params.get("preview") == "1":
-        script = scripts.load_preview(script_id)
-        st.warning("草稿试玩：内容和结果尚未通过正式验收。")
-    else:
-        script = scripts.load_playable(script_id)
+    try:
+        if script_id == fixture.script_id:
+            script = fixture
+        elif game_id and store.is_preview_game(game_id):
+            script = scripts.load_preview(script_id)
+            st.warning("草稿试玩：内容和结果尚未通过正式验收。")
+        else:
+            script = scripts.load_playable(script_id)
+    except ValueError as exc:
+        st.error(str(exc))
+        return
     st.title(script.title)
     if not game_id:
         if st.button("开局"):
@@ -133,14 +137,29 @@ def main():
                                    format_func=lambda x: script.locations[x].display_name)
         st.write(script.locations[location_id].description)
         candidates = available_clues(script, state, location_id)
-        st.caption(f"本地点剩余次数：{max(0, script.locations[location_id].capacity_per_act - state.search_counts.get(location_id, 0))}")
+        if script.search_mode == "location_bundle":
+            st.caption(f"本地点可发现线索：{len(candidates)} · 消耗 1 点")
+        else:
+            st.caption(f"本地点剩余次数：{max(0, script.locations[location_id].capacity_per_act - state.search_counts.get(location_id, 0))}")
         if candidates:
-            clue_id = st.selectbox("搜查目标", [clue.clue_id for clue in candidates],
-                                   format_func=lambda key: f"{script.clues[key].display_name} · {script.clues[key].search_cost} 点")
-            if st.button("搜查"):
-                play("search", location_id=location_id, clue_id=clue_id)
+            if script.search_mode == "location_bundle":
+                if st.button("搜查地点"):
+                    play("search_bundle", location_id=location_id)
+            else:
+                clue_id = st.selectbox("搜查目标", [clue.clue_id for clue in candidates],
+                                       format_func=lambda key: f"{script.clues[key].search_label or script.clues[key].display_name} · {script.clues[key].search_cost} 点")
+                if st.button("搜查"):
+                    play("search", location_id=location_id, clue_id=clue_id)
         else:
             st.info("这里没有当前可搜查的线索。")
+        owned_here = [clue for clue in script.clues.values()
+                      if clue.location_id == location_id
+                      and clue.clue_id in set(state.public_clue_ids + seat.private_clue_ids)]
+        if owned_here:
+            st.subheader("本地点已发现")
+            for clue in owned_here:
+                with st.expander(clue.display_name):
+                    st.write(clue.surface_text)
         if st.button("返回公聊"):
             play("leave_search")
     elif state.phase == Phase.PRIVATE:
@@ -240,7 +259,8 @@ def main():
         st.sidebar.subheader("线索板")
         for clue_id in dict.fromkeys(state.public_clue_ids + seat.private_clue_ids):
             clue = script.clues[clue_id]
-            st.sidebar.write(f"**{clue.display_name}** · {clue.surface_text}")
+            with st.sidebar.expander(clue.display_name):
+                st.write(clue.surface_text)
         with st.expander("推理板"):
             relations_tab, clues_tab, timeline_tab = st.tabs(["关系图", "证据链", "时间线"])
             with relations_tab:
@@ -263,7 +283,8 @@ def main():
                     st.dataframe(rows, hide_index=True, width="stretch")
     if st.sidebar.button("新开一局"):
         new_id = uuid4().hex
-        store.create_game(new_id, script.script_id, script.acts[0].act_id)
+        store.create_game(new_id, script.script_id, script.acts[0].act_id,
+                          is_preview=bool(game_id and store.is_preview_game(game_id)))
         st.query_params["game"] = new_id
         st.rerun()
 

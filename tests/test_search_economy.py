@@ -3,6 +3,7 @@ import pytest
 from jubensha.engine.loop import build_turn_graph, run_turn
 from jubensha.engine.search import available_clues
 from jubensha.engine.fsm import Phase
+from jubensha.eval.invariants import check_invariants
 from jubensha.schema.ir import Act
 from jubensha.storage.events import EventStore
 
@@ -89,3 +90,29 @@ def test_next_act_resets_budgets_and_preserves_clues(script, tmp_path):
     assert state.private_chats_used == 0
     assert state.search_counts == {}
     assert "C04" in state.seats["seat_1"].private_clue_ids
+
+
+def test_location_bundle_costs_one_point_and_respects_prerequisites(script, tmp_path):
+    script = script.model_copy(deep=True)
+    script.search_mode = "location_bundle"
+    script.acts[0].search_points_budget = 2
+    script.locations["room_302"].capacity_per_act = 5
+    store = EventStore(tmp_path / "bundle.db")
+    store.create_game("g", script.script_id, script.acts[0].act_id)
+    graph = build_turn_graph(script, store)
+    def play(action, **kwargs):
+        return run_turn(graph, store, script, {"game_id": "g", "action": action, **kwargs})
+    for action in ("begin", "read_done", "enter_search"):
+        play(action)
+    play("search_bundle", location_id="room_302")
+    first = store.load("g", 2)
+    assert first.seats["seat_1"].search_points == 1
+    assert {"C01", "C02", "C05"}.issubset(first.public_clue_ids)
+    assert "C06" not in first.public_clue_ids
+    play("search_bundle", location_id="room_302")
+    final = store.load("g", 2)
+    assert final.seats["seat_1"].search_points == 0
+    assert {"C06", "C09"}.issubset(final.public_clue_ids)
+    assert not check_invariants(script, store.events("g"))
+    with pytest.raises(ValueError):
+        play("search_bundle", location_id="room_302")

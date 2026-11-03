@@ -63,13 +63,19 @@ def judge_submission(script: Script, state: GameState,
     evidence_terms = text_terms(" ".join(script.clues[key].surface_text for key in evidence
                                       if key in owned and key in script.clues))
     motive_evidence = (motive_terms - public_terms).intersection(evidence_terms)
+    if script.win_condition.motive_evidence_clue_ids and script.win_condition.motive_terms:
+        motive_supported = (bool(evidence.intersection(owned).intersection(
+            script.win_condition.motive_evidence_clue_ids))
+            and any(term in state.vote_motive for term in script.win_condition.motive_terms))
+    else:
+        motive_supported = bool(player_terms.intersection(motive_evidence))
     supporting = [clue_id for clue_id in evidence
                   if clue_id in owned and clue_id in script.clues
-                  and (set(script.clues[clue_id].reveals_event_ids).intersection(culprit_events)
+                  and ((not culprit_secrets and set(script.clues[clue_id].reveals_event_ids).intersection(culprit_events))
                        or set(script.clues[clue_id].reveals_secret_ids).intersection(culprit_secrets))]
     outcomes = {
         "culprit": state.vote_role_id in culprits,
-        "motive": bool(player_terms.intersection(motive_evidence)),
+        "motive": motive_supported,
         "key_evidence": bool(supporting),
     }
     reasons = {

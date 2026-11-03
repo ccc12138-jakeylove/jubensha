@@ -2,7 +2,7 @@ import pytest
 
 from jubensha.eval.invariants import check_invariants
 from jubensha.eval.metrics import cohen_kappa
-from jubensha.eval.simulator import PERSONAS, simulate_game
+from jubensha.eval.simulator import PERSONAS, _choose_search, _choose_vote, simulate_game
 from jubensha.schema.events import EventType, GameEvent
 from jubensha.engine.fsm import Phase
 from jubensha.storage.events import EventStore
@@ -55,7 +55,7 @@ def test_model_player_uses_visible_clues_for_vote(script, tmp_path, monkeypatch)
                     if not public["found"] else {"location_id": "room_201", "clue_id": "C04"})
         assert "C04" in public["clues"]
         assert "201 客房" in public["clues"]["C04"]
-        return {"role_id": "chen_yanqiu", "motive": "怀表", "evidence_ids": ["C02"]}
+        return {"role_id": "lin_suyun", "motive": "欠条", "evidence_ids": ["C04"]}
     monkeypatch.setattr("jubensha.eval.simulator._model_json", plan)
     store = EventStore(tmp_path / "game.db")
     result = simulate_game(script, store, "speedrun",
@@ -63,3 +63,36 @@ def test_model_player_uses_visible_clues_for_vote(script, tmp_path, monkeypatch)
     assert result.completed and result.win
     assert any(event.phase == Phase.CONFRONT and event.type == EventType.PLAYER_INPUT
                for event in store.events(result.game_id))
+
+
+def test_search_planner_sees_only_presearch_label(script, tmp_path, monkeypatch):
+    script = script.model_copy(deep=True)
+    script.clues["C02"].search_label = "待搜查目标 1"
+    script.clues["C02"].display_name = "未公开的线索内容"
+    store = EventStore(tmp_path / "planner.db")
+    store.create_game("g", script.script_id, script.acts[0].act_id)
+    monkeypatch.setattr("jubensha.eval.simulator.configured", lambda: True)
+
+    def plan(store, game_id, node, persona, instruction, public):
+        option = next(item for item in public["options"] if item["clue_id"] == "C02")
+        assert option["target"] == "待搜查目标 1"
+        assert "未公开的线索内容" not in str(public)
+        return {"location_id": option["location_id"], "clue_id": "C02"}
+
+    monkeypatch.setattr("jubensha.eval.simulator._model_json", plan)
+    assert _choose_search(script, store, "g", "speedrun", True)[1].clue_id == "C02"
+
+
+def test_vote_planner_preserves_valid_model_choice_without_word_overlap(script, tmp_path, monkeypatch):
+    store = EventStore(tmp_path / "vote_planner.db")
+    store.create_game("g", script.script_id, script.acts[0].act_id)
+    store.append(GameEvent(seq=0, game_id="g", actor_seat_id="seat_1", turn=1,
+                           phase=Phase.SEARCH, type=EventType.CLUE_FOUND,
+                           payload={"clue_id": "C04", "location_id": "room_201", "search_cost": 1},
+                           visible_to=["seat_1"]))
+    monkeypatch.setattr("jubensha.eval.simulator.configured", lambda: True)
+    monkeypatch.setattr("jubensha.eval.simulator._model_json",
+                        lambda *args: {"role_id": "lin_suyun", "motive": "为了摆脱旧事",
+                                       "evidence_ids": ["C04"]})
+    assert _choose_vote(script, store, "g", "speedrun", True, "a_dai") == (
+        "lin_suyun", "为了摆脱旧事", ["C04"])

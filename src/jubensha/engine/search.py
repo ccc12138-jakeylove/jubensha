@@ -11,10 +11,15 @@ def available_clues(script: Script, state: GameState, location_id: str,
         return []
     seat = state.seats[seat_id] if seat_id else next(iter(state.seats.values()))
     owned = set(state.public_clue_ids) | set(seat.private_clue_ids)
-    return [clue for clue in script.clues.values()
-            if clue.location_id == location_id and state.act_id in clue.act_available
-            and clue.clue_id not in owned and set(clue.prerequisites).issubset(owned)
-            and clue.search_cost <= seat.search_points]
+    candidates = [clue for clue in script.clues.values()
+                  if clue.location_id == location_id and state.act_id in clue.act_available
+                  and clue.clue_id not in owned and set(clue.prerequisites).issubset(owned)
+                  and (seat.search_points >= 1 if script.search_mode == "location_bundle"
+                       else clue.search_cost <= seat.search_points)]
+    if script.search_mode == "location_bundle":
+        remaining = location.capacity_per_act - state.search_counts.get(location_id, 0)
+        return candidates[:remaining]
+    return candidates
 
 
 def select_clue(script: Script, state: GameState, location_id: str, clue_id: str,

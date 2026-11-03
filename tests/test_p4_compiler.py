@@ -403,5 +403,9 @@ def test_authorized_structural_draft_can_preview_without_publication(script, tmp
     draft = compile_document("case.json", script.model_dump_json().encode(), store)
     scripts.save_draft(draft, upload_id)
     assert scripts.load_preview(script.script_id).script_id == script.script_id
+    store.create_game("preview", script.script_id, script.acts[0].act_id, is_preview=True)
+    store.create_game("ordinary", script.script_id, script.acts[0].act_id)
+    assert store.is_preview_game("preview") and not store.is_preview_game("ordinary")
+    assert EventStore(tmp_path / "preview.db").is_preview_game("preview")
     with pytest.raises(ValueError, match="not published"):
         scripts.load_published(script.script_id)

@@ -14,6 +14,7 @@ def check_invariants(script: Script, events: list[GameEvent]) -> list[str]:
     acquired: set[str] = set()
     public_clues: set[str] = set()
     location_counts: dict[str, int] = {}
+    bundle_locations: dict[str, str] = {}
     for event in events:
         if event.type in (EventType.NPC_SPEECH, EventType.CLAIM):
             role_id = event.payload.get("role_id")
@@ -47,11 +48,19 @@ def check_invariants(script: Script, events: list[GameEvent]) -> list[str]:
                 failures.append(f"duplicate clue {clue_id}")
             if not set(clue.prerequisites).issubset(acquired):
                 failures.append(f"missing prerequisite for {clue_id}")
-            if event.payload.get("search_cost") != clue.search_cost:
+            bundle_id = event.payload.get("bundle_id")
+            if bundle_id and script.search_mode == "location_bundle":
+                expected_cost = 1 if bundle_id not in bundle_locations else 0
+                if bundle_id in bundle_locations and bundle_locations[bundle_id] != clue.location_id:
+                    failures.append(f"bundle spans locations at seq {event.seq}")
+                bundle_locations[bundle_id] = clue.location_id
+            else:
+                expected_cost = clue.search_cost
+            if event.payload.get("search_cost") != expected_cost:
                 failures.append(f"incorrect search cost for {clue_id}")
             if phase != Phase.SEARCH:
                 failures.append(f"clue outside search at seq {event.seq}")
-            points -= clue.search_cost
+            points -= event.payload.get("search_cost", 0)
             if points < 0:
                 failures.append(f"search points overdrawn at seq {event.seq}")
             location_counts[clue.location_id] = location_counts.get(clue.location_id, 0) + 1

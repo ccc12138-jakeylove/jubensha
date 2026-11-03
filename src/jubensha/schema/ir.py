@@ -16,6 +16,8 @@ class WinCondition(IRModel):
     required: list[str]
     partial_credit: bool = True
     rubric_id: str | None = None
+    motive_evidence_clue_ids: list[str] = Field(default_factory=list)
+    motive_terms: list[str] = Field(default_factory=list)
 
 
 class Act(IRModel):
@@ -60,6 +62,7 @@ class TruthEvent(IRModel):
 class Clue(IRModel):
     clue_id: str
     display_name: str
+    search_label: str | None = None
     surface_text: str
     truth_value: Literal["true", "false", "misleading"]
     location_id: str
@@ -197,6 +200,7 @@ class Script(IRModel):
     tone: str
     seat_range: tuple[int, int]
     win_condition: WinCondition
+    search_mode: Literal["clue", "location_bundle"] = "clue"
     acts: list[Act]
     characters: dict[str, Character]
     truth_events: list[TruthEvent]
