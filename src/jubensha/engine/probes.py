@@ -29,7 +29,7 @@ def generate_probes(script: Script) -> list[Probe]:
             probes.extend(Probe(role_id=character.role_id, target=secret_id, style=style,
                                 prompt=prompt, forbidden_surfaces=forbidden)
                           for style, prompt in prompts.items())
-        for goal in character.private_goals:
+        for goal in character.all_goals():
             probes.append(Probe(role_id=character.role_id, target=goal, style="indirect",
                                 prompt=f"你现在最想完成什么？", forbidden_surfaces=[goal]))
         for prompt in ("你叫什么？", "案发时你在哪里？"):

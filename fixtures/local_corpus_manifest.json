@@ -1,0 +1,436 @@
+{
+  "corpus": "_剧本",
+  "note": "仅含结构与哈希，不含剧本正文；正文与 local_reviews/ 需另行交付。",
+  "scripts": [
+    {
+      "title": "东方之星号游轮事件",
+      "script_id": "package_cbee32a78c47",
+      "roles": 5,
+      "acts": 1,
+      "clues": 42,
+      "ir_sha256": "cee3ab0e8dc4d684a05ab180b38a22d8e8ec37a3394c891b73bdd1cb43dd0371",
+      "blockers": [
+        "MISSING_KEY_EVIDENCE"
+      ],
+      "warning_count": 44,
+      "act_scope_conservative": false,
+      "files": [
+        {
+          "path": "MIRAGE_东方之星号游轮事件/_真相_GM专用.txt",
+          "sha256": "a619ebf5cfa51e75b7d99707722151ddf5d0463be7d8cadc335fdc3e1ea50f4c",
+          "bytes": 2087
+        },
+        {
+          "path": "MIRAGE_东方之星号游轮事件/_线索.txt",
+          "sha256": "918de14bae63054e91aaa89f8ae3be735ee4a7523b1dec9d328e4b165c4812c5",
+          "bytes": 5857
+        },
+        {
+          "path": "MIRAGE_东方之星号游轮事件/东方之星号游轮事件/人物剧本.json",
+          "sha256": "5071ddf895aede7f81c0ff10f3632e7dca9824d63d57717a7e92fcb21376eac5",
+          "bytes": 15169
+        },
+        {
+          "path": "MIRAGE_东方之星号游轮事件/东方之星号游轮事件/线索.json",
+          "sha256": "9299821fbd251acb2c16afd9adc54365848ebd078892b4d4ae7a32005450621d",
+          "bytes": 5946
+        },
+        {
+          "path": "MIRAGE_东方之星号游轮事件/修经理.txt",
+          "sha256": "f1cc106b35b3f79047619540a6a67f0b84031a61a279f142f6f56663f13ba81f",
+          "bytes": 3446
+        },
+        {
+          "path": "MIRAGE_东方之星号游轮事件/张二副.txt",
+          "sha256": "dc1555395765cdb46632044fb8882cd027c7ad44f6e29fb550830abd2a47f532",
+          "bytes": 2975
+        },
+        {
+          "path": "MIRAGE_东方之星号游轮事件/林歌手.txt",
+          "sha256": "3d67b2eb15abef5792567370526632565dc6faf75ae7fa92172dfd212baf1449",
+          "bytes": 2306
+        },
+        {
+          "path": "MIRAGE_东方之星号游轮事件/洪船长.txt",
+          "sha256": "d67d9c9d47661a6e6b9f7f75bcacd2ad85071d88fcd0c2b6985ec65baf1f88da",
+          "bytes": 3475
+        },
+        {
+          "path": "MIRAGE_东方之星号游轮事件/韩乘务.txt",
+          "sha256": "499da119aec469a5ca1436d47208ce511635b1bfc99e8a3e47a3c294a21f5d00",
+          "bytes": 3200
+        }
+      ]
+    },
+    {
+      "title": "博物馆奇妙夜",
+      "script_id": "package_7e890f8bec8c",
+      "roles": 6,
+      "acts": 1,
+      "clues": 82,
+      "ir_sha256": "b5bf1ef34026fbe967cbc539a427b54444c24c1dccd9dc5ce7b998412ee39745",
+      "blockers": [
+        "MISSING_KEY_EVIDENCE"
+      ],
+      "warning_count": 84,
+      "act_scope_conservative": false,
+      "files": [
+        {
+          "path": "MIRAGE_博物馆奇妙夜/_真相_GM专用.txt",
+          "sha256": "9a0bbeaaa05154110d16f3f88fc4a60c39401c4687427129777b7d4ce315c446",
+          "bytes": 3016
+        },
+        {
+          "path": "MIRAGE_博物馆奇妙夜/_线索.txt",
+          "sha256": "c8dd461e2f1b9ee886f41c513a34c1655dd867756949f7d7eeadbea849d4db70",
+          "bytes": 7726
+        },
+        {
+          "path": "MIRAGE_博物馆奇妙夜/何古玩.txt",
+          "sha256": "aeb6040ecefaebdd5cb9f9af9c247daff785e9ec1fb78ae89a55bfdc2629842f",
+          "bytes": 7716
+        },
+        {
+          "path": "MIRAGE_博物馆奇妙夜/博物馆奇妙夜/人物剧本.json",
+          "sha256": "94c5156115bbf1732e0de5779292afb8b047fc9bfcc599759bc7b3a68da552ac",
+          "bytes": 36797
+        },
+        {
+          "path": "MIRAGE_博物馆奇妙夜/博物馆奇妙夜/线索.json",
+          "sha256": "a5064a65c353c6190ccb8e4eef8cae83d194e5f6bd6d471217bdea8c50728ea1",
+          "bytes": 7826
+        },
+        {
+          "path": "MIRAGE_博物馆奇妙夜/撒干事.txt",
+          "sha256": "27c9ff4bf0b5d34e5fd77f014759a25eb8b4b4ea068ba5a49276ac9a5b163f6d",
+          "bytes": 8142
+        },
+        {
+          "path": "MIRAGE_博物馆奇妙夜/白小爷.txt",
+          "sha256": "9b439245bbbff69155cc5b1ddb4b50bce25635394cf6efe5984e954940f91181",
+          "bytes": 5466
+        },
+        {
+          "path": "MIRAGE_博物馆奇妙夜/鬼邻居.txt",
+          "sha256": "b013fcd611edc56ff7fff4d8311374f8de33b6c8b3692133bb4880770c9b6ef9",
+          "bytes": 2356
+        },
+        {
+          "path": "MIRAGE_博物馆奇妙夜/魏保安.txt",
+          "sha256": "af7f36555fa0c4b6118490ba02d07fd3e705cf11e4e231a2e5dbf92f231962e6",
+          "bytes": 6681
+        },
+        {
+          "path": "MIRAGE_博物馆奇妙夜/鸥神秘.txt",
+          "sha256": "85803f10187962150255832a42a0226c604b992397c441f63e8c35f843fd42aa",
+          "bytes": 6431
+        }
+      ]
+    },
+    {
+      "title": "大明星最后的演出",
+      "script_id": "package_377bd2dbfe41",
+      "roles": 2,
+      "acts": 7,
+      "clues": 17,
+      "ir_sha256": "7c4f084791a594dd6d6afb24a59527022e6e47f5823560dccb098d0afafb5598",
+      "blockers": [
+        "MISSING_KEY_EVIDENCE"
+      ],
+      "warning_count": 20,
+      "act_scope_conservative": true,
+      "files": [
+        {
+          "path": "MIRAGE_大明星最后的演出/_真相_GM专用.txt",
+          "sha256": "7777cbe2377cf7f72371f5d4cfaa551857217d31a556ec76d0623c6ec25df52d",
+          "bytes": 5767
+        },
+        {
+          "path": "MIRAGE_大明星最后的演出/_线索.txt",
+          "sha256": "1395f6d31be84951a7a6ccfee7c9c196834b8f0877cda3d651b0f139862821fa",
+          "bytes": 45090
+        },
+        {
+          "path": "MIRAGE_大明星最后的演出/大明星最后的演出/self_prompts/prompt_belief.txt",
+          "sha256": "d0f5c6ae444e09ebba84a82a5fe33a7bf73c3a58cd04625fc667788ac6224c1f",
+          "bytes": 2626
+        },
+        {
+          "path": "MIRAGE_大明星最后的演出/大明星最后的演出/self_prompts/prompt_converse.txt",
+          "sha256": "c3b73e2efb07e340e40cefceb1d4414378e8bb0fdb91c4d7477f876fdc943433",
+          "bytes": 3062
+        },
+        {
+          "path": "MIRAGE_大明星最后的演出/大明星最后的演出/self_prompts/prompt_query.txt",
+          "sha256": "bc0d114726a6b92494d71148c150fd0a6e25e3e13e88ccc01e108d3f6cb6da47",
+          "bytes": 2619
+        },
+        {
+          "path": "MIRAGE_大明星最后的演出/大明星最后的演出/self_prompts/prompt_select.txt",
+          "sha256": "be31205a722aa4cf2602d91d1f6d9cd6b95f0456ba2b475f5a118271b4978de9",
+          "bytes": 3081
+        },
+        {
+          "path": "MIRAGE_大明星最后的演出/大明星最后的演出/人物剧本.json",
+          "sha256": "b499f0fee035e9b7fdeed2c79fc421d762a8794bc8ef36b4b0ae74b2647b9bbc",
+          "bytes": 30027
+        },
+        {
+          "path": "MIRAGE_大明星最后的演出/大明星最后的演出/线索.json",
+          "sha256": "28d9e741634519cac1a2d8e22ae56f7f4164ca4027d7a85b9546ad852f278e4c",
+          "bytes": 45084
+        },
+        {
+          "path": "MIRAGE_大明星最后的演出/第一幕_沈曼离.txt",
+          "sha256": "8479a9a8fdb93619c2ca213d147c79d3a97968bf1c982aa9a43fcecb61d7672a",
+          "bytes": 2994
+        },
+        {
+          "path": "MIRAGE_大明星最后的演出/第一幕_韩伟文.txt",
+          "sha256": "a59d7d6dbd9375950a4977008484127fa6dcf24da6336d09ac847c7fefcf7f7b",
+          "bytes": 3461
+        },
+        {
+          "path": "MIRAGE_大明星最后的演出/第七幕_沈曼离.txt",
+          "sha256": "b84ff00c3df73042a4b3b26964c3c1deb359355413f83081fd51983ca3a58a34",
+          "bytes": 1222
+        },
+        {
+          "path": "MIRAGE_大明星最后的演出/第七幕_韩伟文.txt",
+          "sha256": "d8f799a0898afefb7f2684e5078cce89a4bcadda0ed39672bd98234c68f3a459",
+          "bytes": 1264
+        },
+        {
+          "path": "MIRAGE_大明星最后的演出/第三幕_沈曼离.txt",
+          "sha256": "3ff55b629357edc8240c33d938418cc6ee217bd7f12eb241a547079b32453d5f",
+          "bytes": 2442
+        },
+        {
+          "path": "MIRAGE_大明星最后的演出/第三幕_韩伟文.txt",
+          "sha256": "d85af378a3a234d6ba8ac0a74662e618ff092fcbfe6d7441203f8439d489e610",
+          "bytes": 2755
+        },
+        {
+          "path": "MIRAGE_大明星最后的演出/第二幕_沈曼离.txt",
+          "sha256": "cfb03a1f84624b6bbc7ab7c35534ca95bbbc147a5b6c5bc4becb8d93263ae561",
+          "bytes": 2005
+        },
+        {
+          "path": "MIRAGE_大明星最后的演出/第二幕_韩伟文.txt",
+          "sha256": "930a392c4f0e165395a2e7465a13cb747986f537bdd19376916b51cc661056b0",
+          "bytes": 1962
+        },
+        {
+          "path": "MIRAGE_大明星最后的演出/第五幕_沈曼离.txt",
+          "sha256": "bbb5233f59b8ed444bf253b1b6d65b366411065aa6420ba30fea0731d0c4d01f",
+          "bytes": 2134
+        },
+        {
+          "path": "MIRAGE_大明星最后的演出/第五幕_韩伟文.txt",
+          "sha256": "27ca7e755dfd4996ea194f646cbcfc401c0768f4c3dbe2a10ca04970acb63061",
+          "bytes": 2303
+        },
+        {
+          "path": "MIRAGE_大明星最后的演出/第六幕_沈曼离.txt",
+          "sha256": "027585f7248c16e84cace68d1c809beaee9169562569e76d8f33692da121172e",
+          "bytes": 1582
+        },
+        {
+          "path": "MIRAGE_大明星最后的演出/第六幕_韩伟文.txt",
+          "sha256": "55c603d19e83b3ed917bf1615d626144dab2adbca984a5de02a85fd2c7ad4026",
+          "bytes": 1874
+        },
+        {
+          "path": "MIRAGE_大明星最后的演出/第四幕_沈曼离.txt",
+          "sha256": "c042569829fe2d55f76d8f9b9ba13bfa53f2fd1621fb877964dcbf054d5600dc",
+          "bytes": 1965
+        },
+        {
+          "path": "MIRAGE_大明星最后的演出/第四幕_韩伟文.txt",
+          "sha256": "dee9780c4ad1cc6a78183bd38c034d18672140bb002d5dc9557f5687331afc5d",
+          "bytes": 1954
+        }
+      ]
+    },
+    {
+      "title": "孝衣新娘",
+      "script_id": "package_58adb415672d",
+      "roles": 10,
+      "acts": 1,
+      "clues": 45,
+      "ir_sha256": "66401ff3dbc6d46929dd7a0f92a109385a73f7989ca5e89ade15f9b0e5021c97",
+      "blockers": [
+        "MISSING_KEY_EVIDENCE"
+      ],
+      "warning_count": 47,
+      "act_scope_conservative": false,
+      "files": [
+        {
+          "path": "MIRAGE_孝衣新娘/_真相_GM专用.txt",
+          "sha256": "d4f5b4997e88309bdb59074d9d8f7926d82c89f670a019a740eb2d97c75fdbaa",
+          "bytes": 9896
+        },
+        {
+          "path": "MIRAGE_孝衣新娘/_线索.txt",
+          "sha256": "e8b3bfc91d84e8880fcc45e166c641dea900e02d46163a97b13d0d64bf26e07c",
+          "bytes": 7723
+        },
+        {
+          "path": "MIRAGE_孝衣新娘/云凌.txt",
+          "sha256": "abddd87f5a665864a231b00286167a38e9cd97971d3fa2c1bb987ec36616ecdb",
+          "bytes": 12163
+        },
+        {
+          "path": "MIRAGE_孝衣新娘/姚仲义.txt",
+          "sha256": "fbe0897e80428c00c4a4f077fd05c54857a9dac631b975828a54d31d9c28b989",
+          "bytes": 14278
+        },
+        {
+          "path": "MIRAGE_孝衣新娘/孝衣新娘/人物剧本.json",
+          "sha256": "34935a6a9c541410c5530b0f6668cb68674b14b584307e52de6627a4e4d49ccc",
+          "bytes": 128691
+        },
+        {
+          "path": "MIRAGE_孝衣新娘/孝衣新娘/线索.json",
+          "sha256": "66bccf5b5144d8419334e052556235eef8890b24c6037fa7892f4c6d3a8455a4",
+          "bytes": 10173
+        },
+        {
+          "path": "MIRAGE_孝衣新娘/方医生.txt",
+          "sha256": "1630299e1c1f1d8956ce0bc0fef75b8b018592cb4ff15a5ca1cbe48734051b6f",
+          "bytes": 12603
+        },
+        {
+          "path": "MIRAGE_孝衣新娘/朱迪.txt",
+          "sha256": "6b455421c82e276c4722b268cca0c1504257e5c7a290eac83106a490340ab888",
+          "bytes": 13575
+        },
+        {
+          "path": "MIRAGE_孝衣新娘/红夫人.txt",
+          "sha256": "976c15dfacb495b4c7922b33cc30a5cfefa45111340785899174cc24dafa9607",
+          "bytes": 13605
+        },
+        {
+          "path": "MIRAGE_孝衣新娘/胡人玉.txt",
+          "sha256": "ab1c5d4bb796d1e0612720348a6b2ef9f8bcbeb4c640554aa0a6f8e7d49f8a85",
+          "bytes": 12695
+        },
+        {
+          "path": "MIRAGE_孝衣新娘/虞医师.txt",
+          "sha256": "d653d3a61b0bdb60757eca7030f5af0d152f083551b80f8ade9e32fca1ef9aed",
+          "bytes": 12247
+        },
+        {
+          "path": "MIRAGE_孝衣新娘/贵叔.txt",
+          "sha256": "46cdd66b633d1e231dd0f268d89a48c20a25c7dbafbda4a83a4bbd1afaa0a1d2",
+          "bytes": 12170
+        },
+        {
+          "path": "MIRAGE_孝衣新娘/陈均梦.txt",
+          "sha256": "3e99219fe1d55bfa00028f530c309c50591686d3e235f05d7c34f1db97c76616",
+          "bytes": 11918
+        },
+        {
+          "path": "MIRAGE_孝衣新娘/陈安巧.txt",
+          "sha256": "4f39c1793853b65aba0171a5e3a34cfcb71e0fffb5bb63d882c13904b061680e",
+          "bytes": 13412
+        }
+      ]
+    },
+    {
+      "title": "怒海余生",
+      "script_id": "package_19ecfed1dcf2",
+      "roles": 6,
+      "acts": 2,
+      "clues": 27,
+      "ir_sha256": "df510401daa9fc35d2f5707c782dd055bfbede5adcb8e15de0df5672e688fcba",
+      "blockers": [
+        "MISSING_KEY_EVIDENCE"
+      ],
+      "warning_count": 30,
+      "act_scope_conservative": true,
+      "files": [
+        {
+          "path": "MIRAGE_怒海余生/_真相_GM专用.txt",
+          "sha256": "0465577d188159ef42dd0cea8c682a09e5f6e2ab3fbd04ccbc1c0abf99418f5c",
+          "bytes": 6416
+        },
+        {
+          "path": "MIRAGE_怒海余生/_线索.txt",
+          "sha256": "e80c0f6b68283ea291b8316ecb047600e6f690319865c5adc1557d18b28be0dd",
+          "bytes": 3833
+        },
+        {
+          "path": "MIRAGE_怒海余生/怒海余生/人物剧本.json",
+          "sha256": "362b45f73a338a3d3e926d2329f6b185db6c73ef67e56f823964ff0633c7f578",
+          "bytes": 51798
+        },
+        {
+          "path": "MIRAGE_怒海余生/怒海余生/线索.json",
+          "sha256": "9362d0cc7e0f10233d3194c8f1b180b908fdb0e022ffcf5712443327d894aa63",
+          "bytes": 3922
+        },
+        {
+          "path": "MIRAGE_怒海余生/第一幕_安妮.txt",
+          "sha256": "4b26449006b35d19feff0694174c457284ba85efe80c88c2e8ffe1961a95728d",
+          "bytes": 5631
+        },
+        {
+          "path": "MIRAGE_怒海余生/第一幕_小布莱克.txt",
+          "sha256": "7428842d01c49ce046ac926207d330b0e06692754e50c7ce71bc388664425196",
+          "bytes": 5405
+        },
+        {
+          "path": "MIRAGE_怒海余生/第一幕_山姆.txt",
+          "sha256": "429b157c2574fe073bed8be64625c97bb3dbad6c5a78306059eb9a3da0adcadf",
+          "bytes": 5577
+        },
+        {
+          "path": "MIRAGE_怒海余生/第一幕_杰克.txt",
+          "sha256": "e6787320a136af5e8ad03ecfa53d89611f69667d17a39b0b7f4033b8c62f48a0",
+          "bytes": 7230
+        },
+        {
+          "path": "MIRAGE_怒海余生/第一幕_杰西帕.txt",
+          "sha256": "489b8bad53e1e6cbf97accaf0773cbb08229bd11bd13f8228166933c1fc143ab",
+          "bytes": 5907
+        },
+        {
+          "path": "MIRAGE_怒海余生/第一幕_约翰.txt",
+          "sha256": "c61e029da1dbebd3b66a3a91cd1febab6ceba8763f908748f361997ad9673d1d",
+          "bytes": 5302
+        },
+        {
+          "path": "MIRAGE_怒海余生/第二幕_安妮.txt",
+          "sha256": "0a7c8364c12bc927662e420cb9ae0f224bcfb420f465615cf55084241c54916e",
+          "bytes": 1995
+        },
+        {
+          "path": "MIRAGE_怒海余生/第二幕_小布莱克.txt",
+          "sha256": "b1de25bcf71eb089d0218ba0b158c94ac236bcd6f329c68a7ab72946d8da3ed7",
+          "bytes": 3516
+        },
+        {
+          "path": "MIRAGE_怒海余生/第二幕_山姆.txt",
+          "sha256": "97500366f6fcb0ecc03778d39ed9f80b4f67aaa73d019e26a7c509045e643f63",
+          "bytes": 2480
+        },
+        {
+          "path": "MIRAGE_怒海余生/第二幕_杰克.txt",
+          "sha256": "c7bea542f1afa838c56daba66b3cd398172055b455bb0c09ec5a07326aff7f96",
+          "bytes": 2949
+        },
+        {
+          "path": "MIRAGE_怒海余生/第二幕_杰西帕.txt",
+          "sha256": "06ace8e4d5acf1f2c3154c3b977f732e8b570ffc6adce83ac4947b1a28244baf",
+          "bytes": 3184
+        },
+        {
+          "path": "MIRAGE_怒海余生/第二幕_约翰.txt",
+          "sha256": "6929c34d5672fb3d6c06b692092e370e0e7de5280747d3fb6c821f313f62cebf",
+          "bytes": 2792
+        }
+      ]
+    }
+  ]
+}

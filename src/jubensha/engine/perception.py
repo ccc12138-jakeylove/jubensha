@@ -43,10 +43,12 @@ def build_perception(script: Script, state: GameState, role_id: str) -> Percepti
                 for turn in (script.secrets[secret_id].lie_script or [])
                 if turn.act == state.act_id]
     current_order = next(act.order for act in script.acts if act.act_id == state.act_id)
+    order_by_act = {act.act_id: act.order for act in script.acts}
     available_act_ids = {act.act_id for act in script.acts if act.order <= current_order}
     return PerceptionView(
         role_id=role_id, display_name=character.display_name,
-        public_profile=character.public_profile, private_goals=list(character.private_goals),
+        public_profile=character.public_profile,
+        private_goals=character.goals_for_act(order_by_act, current_order),
         persona_style=character.persona_style, speech_constraints=list(character.speech_constraints),
         known_events=events, known_clues=clues,
         known_statements=[{"statement_id": item.statement_id, "text": item.text}

@@ -96,3 +96,55 @@ def test_vote_planner_preserves_valid_model_choice_without_word_overlap(script, 
                                        "evidence_ids": ["C04"]})
     assert _choose_vote(script, store, "g", "speedrun", True, "a_dai") == (
         "lin_suyun", "为了摆脱旧事", ["C04"])
+
+
+def test_vote_prompt_stays_generic_for_any_script(script, tmp_path, monkeypatch):
+    store = EventStore(tmp_path / "vote_prompt.db")
+    store.create_game("g", script.script_id, script.acts[0].act_id)
+    store.append(GameEvent(seq=0, game_id="g", actor_seat_id="seat_1", turn=1,
+                           phase=Phase.SEARCH, type=EventType.CLUE_FOUND,
+                           payload={"clue_id": "C04", "location_id": "room_201", "search_cost": 1},
+                           visible_to=["seat_1"]))
+    captured = {}
+    monkeypatch.setattr("jubensha.eval.simulator.configured", lambda: True)
+    def plan(store, game_id, node, persona, instruction, public):
+        captured.update(instruction=instruction, public=public)
+        return {"role_id": "lin_suyun", "motive": "为了拿回欠条", "evidence_ids": ["C04"]}
+    monkeypatch.setattr("jubensha.eval.simulator._model_json", plan)
+    assert _choose_vote(script, store, "g", "speedrun", True, "a_dai")[0] == "lin_suyun"
+    assert "欠条" not in captured["instruction"]
+    assert "C04" in captured["public"]["clues"]
+
+
+def test_invalid_model_vote_records_fallback_instead_of_name_guessing(script, tmp_path, monkeypatch):
+    store = EventStore(tmp_path / "vote_invalid.db")
+    store.create_game("g", script.script_id, script.acts[0].act_id)
+    store.append(GameEvent(seq=0, game_id="g", actor_seat_id="seat_1", turn=1,
+                           phase=Phase.SEARCH, type=EventType.CLUE_FOUND,
+                           payload={"clue_id": "C04", "location_id": "room_201", "search_cost": 1},
+                           visible_to=["seat_1"]))
+    monkeypatch.setattr("jubensha.eval.simulator.configured", lambda: True)
+    monkeypatch.setattr("jubensha.eval.simulator._model_json",
+                        lambda *args: (_ for _ in ()).throw(ValueError("bad json")))
+    diagnostics = []
+    role_id, motive, evidence = _choose_vote(
+        script, store, "g", "speedrun", True, "a_dai", diagnostics)
+    # C04 文本里出现“林素云”，但无效输出不能再按名字频率猜人。
+    assert role_id == "a_dai"
+    assert "模型未返回" in motive
+    assert evidence == ["C04"]
+    assert diagnostics == ["invalid_model_vote"]
+
+
+def test_simulated_game_surfaces_invalid_model_vote(script, tmp_path, monkeypatch):
+    monkeypatch.setattr("jubensha.eval.simulator.configured", lambda: True)
+    monkeypatch.setattr("jubensha.agents.npc.configured", lambda: False)
+    monkeypatch.setattr("jubensha.engine.guard.configured", lambda: False)
+    monkeypatch.setattr("jubensha.eval.simulator._question", lambda *args: "你知道什么？")
+    monkeypatch.setattr("jubensha.eval.simulator._model_json",
+                        lambda *args: (_ for _ in ()).throw(ValueError("bad json")))
+    store = EventStore(tmp_path / "invalid_vote.db")
+    result = simulate_game(script, store, "speedrun", model_driven=True, variant=1)
+    assert result.completed
+    assert result.invalid_model_votes == 1
+    assert "invalid_model_vote" in result.attributions

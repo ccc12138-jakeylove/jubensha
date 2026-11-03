@@ -19,6 +19,7 @@ class EvalMetrics(BaseModel):
     cost_usd: float | None = None
     p95_latency_ms: float | None = None
     judge_mean: float | None = None
+    invalid_model_vote_rate: float | None = None
 
 
 def cohen_kappa(human: list[int], model: list[int]) -> float:

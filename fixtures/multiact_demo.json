@@ -1,0 +1,389 @@
+{
+  "script_id": "multiact_demo",
+  "title": "双幕测试本（合成）",
+  "genre": "本格",
+  "ir_version": "1.1",
+  "tone": "悬疑",
+  "seat_range": [
+    1,
+    2
+  ],
+  "search_mode": "location_bundle",
+  "win_condition": {
+    "type": "accuse",
+    "required": [
+      "culprit",
+      "motive",
+      "key_evidence"
+    ],
+    "partial_credit": true,
+    "motive_evidence_clue_ids": [
+      "C02",
+      "C04"
+    ],
+    "motive_terms": [
+      "遗产",
+      "遗嘱"
+    ]
+  },
+  "acts": [
+    {
+      "act_id": "A01",
+      "order": 1,
+      "title": "第一幕·遗嘱",
+      "public_narrative": "林家家宴前，书房里的遗嘱被人翻动过。",
+      "allowed_phases": [
+        "read",
+        "act_open",
+        "search",
+        "private",
+        "confront",
+        "vote"
+      ],
+      "search_points_budget": 3,
+      "private_chat_budget": 1
+    },
+    {
+      "act_id": "A02",
+      "order": 2,
+      "title": "第二幕·旧案",
+      "public_narrative": "储藏室的保险柜被打开，旧案重新浮出水面。",
+      "allowed_phases": [
+        "read",
+        "act_open",
+        "search",
+        "private",
+        "confront",
+        "vote"
+      ],
+      "search_points_budget": 3,
+      "private_chat_budget": 1
+    }
+  ],
+  "characters": {
+    "R01": {
+      "role_id": "R01",
+      "display_name": "林岚",
+      "is_culprit": true,
+      "public_profile": "林岚，林家养女，负责整理书房和账目。",
+      "private_goals": [
+        "确认遗嘱内容"
+      ],
+      "private_goals_by_act": {
+        "A01": [
+          "确认遗嘱内容"
+        ],
+        "A02": [
+          "掩盖自己改写遗嘱的事实"
+        ]
+      },
+      "persona_style": "克制、简短",
+      "secret_ids": [
+        "S01"
+      ],
+      "speech_constraints": [
+        "不主动承认改写遗嘱"
+      ]
+    },
+    "R02": {
+      "role_id": "R02",
+      "display_name": "周牧",
+      "is_culprit": false,
+      "public_profile": "周牧，林家旧友之子，前来吊唁。",
+      "private_goals": [
+        "查明父亲死因"
+      ],
+      "private_goals_by_act": {
+        "A01": [
+          "查明父亲死因"
+        ],
+        "A02": [
+          "查明父亲死因"
+        ]
+      },
+      "persona_style": "急切、直接",
+      "secret_ids": [
+        "S02"
+      ],
+      "speech_constraints": []
+    }
+  },
+  "truth_events": [
+    {
+      "event_id": "E01",
+      "act_id": "A01",
+      "t_start": 0,
+      "t_end": 10,
+      "location_id": "L01",
+      "actor_ids": [
+        "R01"
+      ],
+      "action": "林岚在书房翻阅遗嘱",
+      "observable": [
+        "林岚在书房翻阅过遗嘱"
+      ],
+      "hidden": [],
+      "evidence_clue_ids": [
+        "C01"
+      ]
+    },
+    {
+      "event_id": "E02",
+      "act_id": "A02",
+      "t_start": 60,
+      "t_end": 70,
+      "location_id": "L02",
+      "actor_ids": [
+        "R01"
+      ],
+      "action": "林岚把改写后的遗嘱锁进保险柜",
+      "observable": [],
+      "hidden": [
+        "林岚改写并藏匿遗嘱"
+      ],
+      "evidence_clue_ids": [
+        "C02",
+        "C04"
+      ]
+    }
+  ],
+  "clues": {
+    "C01": {
+      "clue_id": "C01",
+      "display_name": "遗嘱草案",
+      "search_label": "查看书桌上的遗嘱草案",
+      "surface_text": "遗嘱草案的受益人一栏有涂改痕迹，旁边压着一枚林家旧印章。",
+      "truth_value": "true",
+      "location_id": "L01",
+      "act_available": [
+        "A01"
+      ],
+      "search_cost": 1,
+      "prerequisites": [],
+      "reveals_event_ids": [
+        "E01"
+      ],
+      "reveals_secret_ids": [],
+      "visibility": "public",
+      "red_herring": false
+    },
+    "C02": {
+      "clue_id": "C02",
+      "display_name": "保险柜钥匙",
+      "search_label": "检查储藏室抽屉",
+      "surface_text": "抽屉夹层里有一把保险柜钥匙，钥匙牌上写着“林”。",
+      "truth_value": "true",
+      "location_id": "L02",
+      "act_available": [
+        "A02"
+      ],
+      "search_cost": 1,
+      "prerequisites": [
+        "C01"
+      ],
+      "reveals_event_ids": [
+        "E02"
+      ],
+      "reveals_secret_ids": [
+        "S01"
+      ],
+      "visibility": "private",
+      "red_herring": false
+    },
+    "C03": {
+      "clue_id": "C03",
+      "display_name": "旧合影",
+      "search_label": "翻看书架上的相册",
+      "surface_text": "一张旧合影，背面写着“周牧与父亲”，落款年份早于周牧出生。",
+      "truth_value": "true",
+      "location_id": "L01",
+      "act_available": [
+        "A01"
+      ],
+      "search_cost": 1,
+      "prerequisites": [],
+      "reveals_event_ids": [],
+      "reveals_secret_ids": [
+        "S02"
+      ],
+      "visibility": "public",
+      "red_herring": false
+    },
+    "C04": {
+      "clue_id": "C04",
+      "display_name": "被替换的遗嘱页",
+      "search_label": "比对保险柜里的文件",
+      "surface_text": "新遗嘱的落款笔迹属于林岚，日期被改成案发前一天。",
+      "truth_value": "true",
+      "location_id": "L02",
+      "act_available": [
+        "A02"
+      ],
+      "search_cost": 1,
+      "prerequisites": [
+        "C02"
+      ],
+      "reveals_event_ids": [
+        "E02"
+      ],
+      "reveals_secret_ids": [
+        "S01"
+      ],
+      "visibility": "public",
+      "red_herring": false
+    }
+  },
+  "locations": {
+    "L01": {
+      "location_id": "L01",
+      "display_name": "书房",
+      "description": "摆满族谱与账册的书房",
+      "searchable": true,
+      "capacity_per_act": 2,
+      "act_availability": [
+        "A01"
+      ],
+      "connected_to": [
+        "L02"
+      ]
+    },
+    "L02": {
+      "location_id": "L02",
+      "display_name": "储藏室",
+      "description": "堆着旧箱子的储藏室",
+      "searchable": true,
+      "capacity_per_act": 2,
+      "act_availability": [
+        "A02"
+      ],
+      "connected_to": [
+        "L01"
+      ]
+    }
+  },
+  "secrets": {
+    "S01": {
+      "secret_id": "S01",
+      "owner_role_id": "R01",
+      "content": "林岚改写遗嘱以掩盖自己挪用遗产的事实",
+      "exposed_by_clue_ids": [
+        "C02",
+        "C04"
+      ],
+      "leak_policy": "deny",
+      "forbidden_claims": [],
+      "lie_script": null,
+      "is_crime_secret": true
+    },
+    "S02": {
+      "secret_id": "S02",
+      "owner_role_id": "R02",
+      "content": "周牧是死者的私生子",
+      "exposed_by_clue_ids": [
+        "C03"
+      ],
+      "leak_policy": "deflect",
+      "forbidden_claims": [],
+      "lie_script": null,
+      "is_crime_secret": false
+    }
+  },
+  "knowledge": {
+    "R01": {
+      "role_id": "R01",
+      "knows_event_ids": [
+        "E01",
+        "E02"
+      ],
+      "knows_clue_ids": [
+        "C01",
+        "C02",
+        "C04"
+      ],
+      "false_beliefs": [],
+      "forbidden_topics": [
+        "改写遗嘱"
+      ],
+      "statements": []
+    },
+    "R02": {
+      "role_id": "R02",
+      "knows_event_ids": [
+        "E01"
+      ],
+      "knows_clue_ids": [
+        "C01",
+        "C03"
+      ],
+      "false_beliefs": [],
+      "forbidden_topics": [],
+      "statements": []
+    }
+  },
+  "relationships": [],
+  "leak_surfaces": {
+    "S01": {
+      "secret_id": "S01",
+      "fact": "林岚改写并藏匿了遗嘱",
+      "paraphrases": [
+        "遗嘱是林岚改的",
+        "保险柜里的新遗嘱出自林岚"
+      ],
+      "implications": [
+        "林岚为了遗产动手"
+      ],
+      "qa_probes": [
+        "你改过遗嘱吗？",
+        "保险柜里的遗嘱是谁放的？"
+      ]
+    },
+    "S02": {
+      "secret_id": "S02",
+      "fact": "周牧是死者的私生子",
+      "paraphrases": [
+        "周牧与死者是父子"
+      ],
+      "implications": [
+        "周牧有继承资格"
+      ],
+      "qa_probes": [
+        "你和死者是什么关系？"
+      ]
+    }
+  },
+  "provenance": {},
+  "content_rating": "all",
+  "tags": [
+    "合成测试"
+  ],
+  "act_scope_reviewed": true,
+  "parser_meta": {
+    "source_files": [
+      "synthetic:multiact_demo"
+    ],
+    "segments": [],
+    "field_confidence": {},
+    "reconcile_warnings": []
+  },
+  "linter_report": {
+    "passed": true,
+    "blockers": [],
+    "warnings": [],
+    "solvability": {
+      "solvable": true,
+      "optimal_path_clue_ids": [
+        "C01",
+        "C02",
+        "C04"
+      ],
+      "missing_evidence": [],
+      "requires_human_review": true,
+      "minimum_cost": 3,
+      "search_budget": 6,
+      "alternative_culprits": []
+    },
+    "difficulty": 3,
+    "red_herring_ratio": 0.0
+  },
+  "difficulty": 3
+}

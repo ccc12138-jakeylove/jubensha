@@ -41,9 +41,27 @@ class Character(IRModel):
     is_player_seat: bool = False
     public_profile: str
     private_goals: list[str]
+    # 多幕本按幕记录角色目标；旧 IR 没有该字段时沿用 private_goals。
+    private_goals_by_act: dict[str, list[str]] = Field(default_factory=dict)
     persona_style: str
     secret_ids: list[str]
     speech_constraints: list[str]
+
+    def all_goals(self) -> list[str]:
+        """用于裁判/质检的完整目标集合；不用于角色当前幕视角。"""
+        goals = list(self.private_goals)
+        for items in self.private_goals_by_act.values():
+            goals.extend(items)
+        return list(dict.fromkeys(goal for goal in goals if goal.strip()))
+
+    def goals_for_act(self, order_by_act: dict[str, int], current_order: int) -> list[str]:
+        """只返回当前幕及此前幕的目标，避免提前泄露后续剧情。"""
+        if not self.private_goals_by_act:
+            return list(self.private_goals)
+        goals = [goal for act_id, items in self.private_goals_by_act.items()
+                 if order_by_act.get(act_id, current_order + 1) <= current_order
+                 for goal in items]
+        return list(dict.fromkeys(goal for goal in goals if goal.strip())) or list(self.private_goals)
 
 
 class TruthEvent(IRModel):
@@ -217,3 +235,5 @@ class Script(IRModel):
     tags: list[str] = Field(default_factory=list)
     parser_meta: ParserMeta | None = None
     director_config: DirectorConfig | None = None
+    # 多幕本是否已逐幕核对线索/地点开放范围；导入器默认 False。
+    act_scope_reviewed: bool = False

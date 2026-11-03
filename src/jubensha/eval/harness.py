@@ -151,7 +151,7 @@ def run_eval(script: Script, store: EventStore, *, games_per_persona: int = 5,
     traces = []
     with store.connect() as db:
         for game_id in [*ids, run_id]:
-            traces.extend(dict(row) for row in db.execute("SELECT * FROM llm_traces WHERE game_id=?", (game_id,)))
+            traces.extend(dict(row) for row in db.execute("SELECT * FROM llm_traces WHERE game_id=%s", (game_id,)))
     known_costs = [row["cost_usd"] for row in traces if row["cost_usd"] is not None]
     metrics = EvalMetrics(
         games=len(results), completed=sum(result.completed for result in results),
@@ -169,6 +169,8 @@ def run_eval(script: Script, store: EventStore, *, games_per_persona: int = 5,
         cost_usd=sum(known_costs) if known_costs else None,
         p95_latency_ms=p95([row["latency_ms"] for row in traces]),
         judge_mean=mean(judge_scores) if judge_scores else None,
+        invalid_model_vote_rate=(mean(result.invalid_model_votes for result in results)
+                                 if live_model else None),
     )
     gate_passed = (metrics.completed == metrics.games and metrics.invariant_failures == 0
                    and metrics.stuck_rate < 0.10
@@ -235,6 +237,7 @@ def render_report(report: EvalReport, title: str) -> str:
              f"| 输入/输出 token | {metrics.input_tokens}/{metrics.output_tokens} |",
              f"| p95 延迟 | {metrics.p95_latency_ms if metrics.p95_latency_ms is not None else '未测'} ms |",
              f"| 成本 | {metrics.cost_usd if metrics.cost_usd is not None else '未测'} USD |",
+             f"| 模拟玩家无效投票率 | {f'{metrics.invalid_model_vote_rate:.1%}' if metrics.invalid_model_vote_rate is not None else '未测'} |",
              f"| 抽样 judge 均分 | {metrics.judge_mean if metrics.judge_mean is not None else '未测'} |",
              "", f"探针数：{report.probe_count}；{'模型回归门禁' if metrics.model_evaluated else '结构门禁'}：{'通过' if report.gate_passed else '失败'}；模型质量验收：{'待人工校准' if metrics.model_evaluated else '未测'}。"]
     lines.extend(["", "| 策略 | 局数 | 通关 | 主动发言不足两次 |",

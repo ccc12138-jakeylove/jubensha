@@ -3,6 +3,7 @@ import re
 from typing import Literal
 from uuid import uuid4
 
+from json_repair import repair_json
 from pydantic import BaseModel, ConfigDict, Field
 
 from jubensha.engine.fsm import Phase
@@ -35,6 +36,7 @@ class SimResult(BaseModel):
     errors: list[str]
     judgment_outcomes: dict[str, bool] = Field(default_factory=dict)
     attributions: list[str] = Field(default_factory=list)
+    invalid_model_votes: int = 0
 
 
 def _model_json(store: EventStore, game_id: str, node: str, persona: Persona,
@@ -43,10 +45,14 @@ def _model_json(store: EventStore, game_id: str, node: str, persona: Persona,
         {"role": "system", "content": f"你是{persona}风格的推理玩家。只能依据提供的玩家可见信息决策，不得猜测幕后真相。{instruction}只输出JSON对象。"},
         {"role": "user", "content": json.dumps(public, ensure_ascii=False)},
     ]
-    raw = generate(store, game_id, node, f"simulator.{node}.v1", messages,
+    version = "v2" if node in ("vote_plan", "search_plan") else "v1"
+    raw = generate(store, game_id, node, f"simulator.{node}.{version}", messages,
                    max_tokens=350, json_mode=True)
     cleaned = re.sub(r"^\s*```(?:json)?\s*|\s*```\s*$", "", raw.strip(), flags=re.IGNORECASE)
-    value = json.loads(cleaned)
+    try:
+        value = json.loads(cleaned)
+    except json.JSONDecodeError:
+        value = repair_json(cleaned, return_objects=True)
     if not isinstance(value, dict):
         raise ValueError("simulator response must be an object")
     return value
@@ -81,14 +87,15 @@ def _choose_search(script: Script, store: EventStore, game_id: str,
                     return location_id, clue
         except (ValueError, KeyError):
             pass
-    documentary = ("欠", "账", "信", "合同", "证明", "证书", "口供", "遗嘱")
+    # 无模型时只做透明的成本/顺序兜底，不再假设“文书类线索更关键”。
     return min(available, key=lambda pair: (
         1 if script.search_mode == "location_bundle" else pair[1].search_cost,
-        -any(token in (pair[1].search_label or pair[1].display_name) for token in documentary)))
+        pair[1].search_cost, pair[0], pair[1].clue_id))
 
 
 def _choose_vote(script: Script, store: EventStore, game_id: str, persona: Persona,
-                 model_driven: bool, fallback_role_id: str) -> tuple[str, str, list[str]]:
+                 model_driven: bool, fallback_role_id: str,
+                 diagnostics: list[str] | None = None) -> tuple[str, str, list[str]]:
     state = store.load(game_id, script.acts[0].search_points_budget)
     owned = list(dict.fromkeys(state.public_clue_ids + next(iter(state.seats.values())).private_clue_ids))
     clue_text = {
@@ -100,26 +107,33 @@ def _choose_vote(script: Script, store: EventStore, game_id: str, persona: Perso
                            if event.type in (EventType.PLAYER_INPUT, EventType.NPC_SPEECH)
                            and "*" in event.visible_to][-12:]
         try:
-            choice = _model_json(store, game_id, "vote_plan", persona,
-                                 "提交推理，返回role_id、motive、evidence_ids三个字段。motive要说明嫌疑人希望改变什么处境，并指出支撑它的线索；不要把作案方式当动机。欠条须看清落款是谁、谁欠谁，持有欠条与取得现金是不同目的；不要从欠债直接推出杀人取钱。evidence_ids只能从已获线索中选。被指认者必须与所选线索直接相关；亲属或财务关系可能只是误导，还要比较作案条件。",
-                                 {"characters": {key: value.public_profile for key, value in script.characters.items()},
-                                  "clues": clue_text, "dialogue": public_dialogue})
+            choice = _model_json(
+                store, game_id, "vote_plan", persona,
+                "提交最终推理，只返回JSON对象：role_id、motive、evidence_ids。"
+                "motive 用肯定句说明嫌疑人想改变的具体处境，并说明哪条已获线索支持它；"
+                "不要把作案方式、身份关系或持有物品本身当作动机；不确定的猜想不要写成结论。"
+                "evidence_ids 只能从已获线索ID中选择，且每条都要与所指认的角色直接相关。",
+                {"characters": {key: value.public_profile
+                                for key, value in script.characters.items()},
+                 "clues": clue_text, "dialogue": public_dialogue})
+            evidence = choice.get("evidence_ids", [])
             if (choice.get("role_id") in script.characters
                     and isinstance(choice.get("motive"), str)
-                    and choice["motive"].strip()):
-                evidence = choice.get("evidence_ids", [])
-                if isinstance(evidence, list) and evidence and all(key in clue_text for key in evidence):
-                    return choice["role_id"], choice["motive"][:400], evidence
-        except (ValueError, KeyError):
-            pass
-    if model_driven and clue_text:
-        support = {key: sum(script.characters[key].display_name in text
-                            for text in clue_text.values()) for key in script.characters}
-        strongest = max(support.values())
-        candidates = [key for key, score in support.items() if score == strongest]
-        role_id = fallback_role_id if fallback_role_id in candidates else candidates[0]
-        return role_id, "；".join(clue_text.values())[:400], owned
-    return fallback_role_id, "根据目前线索作出判断", owned[:2]
+                    and choice["motive"].strip()
+                    and isinstance(evidence, list) and evidence
+                    and all(key in clue_text for key in evidence)):
+                return choice["role_id"], choice["motive"][:400], evidence
+            if diagnostics is not None:
+                diagnostics.append("invalid_model_vote")
+        except (ValueError, KeyError, TypeError):
+            if diagnostics is not None:
+                diagnostics.append("invalid_model_vote")
+    elif model_driven and diagnostics is not None:
+        diagnostics.append("model_unavailable")
+    # 不用“线索里出现了谁的名字”来猜人：无效输出必须显式归因，而不是
+    # 用名字频率伪装成推理。兜底只投自己角色，便于对照时识别失败样本。
+    motive = "模型未返回可用的指认与动机" if model_driven else "根据目前线索作出判断"
+    return fallback_role_id, motive, owned[:2]
 
 
 def _question(persona: Persona, script: Script, store: EventStore, game_id: str,
@@ -151,6 +165,7 @@ def simulate_game(script: Script, store: EventStore, persona: Persona,
     store.create_game(game_id, script.script_id, first_act.act_id)
     graph = build_turn_graph(script, store)
     errors = []
+    diagnostics: list[str] = []
     roles = list(script.characters)
     role_id = roles[(PERSONAS.index(persona) + variant) % len(roles)]
     def play(action: str, **kwargs):
@@ -189,12 +204,12 @@ def simulate_game(script: Script, store: EventStore, persona: Persona,
             play("enter_confront")
             if model_driven:
                 provisional_role, _, provisional_evidence = _choose_vote(
-                    script, store, game_id, persona, True, role_id)
+                    script, store, game_id, persona, True, role_id, diagnostics)
                 play("confront_talk", role_id=provisional_role,
                      text="请解释这些线索与你的行踪、动机有什么关系。",
                      evidence_ids=provisional_evidence)
             accused, motive, evidence = _choose_vote(script, store, game_id, persona,
-                                                     model_driven, role_id)
+                                                     model_driven, role_id, diagnostics)
             play("vote", role_id=accused, motive=motive, evidence_ids=evidence)
             if index == len(script.acts) - 1:
                 play("recap")
@@ -210,6 +225,10 @@ def simulate_game(script: Script, store: EventStore, persona: Persona,
     attributions = []
     if errors:
         attributions.append("model_or_engine_error")
+    if "invalid_model_vote" in diagnostics:
+        attributions.append("invalid_model_vote")
+    if "model_unavailable" in diagnostics:
+        attributions.append("model_unavailable")
     if state.phase != Phase.END:
         attributions.append("incomplete")
     if not judgment.passed:
@@ -239,4 +258,5 @@ def simulate_game(script: Script, store: EventStore, persona: Persona,
                          and event.payload.get("director_level", 0) >= 2 for event in events),
         invariant_failures=invariant_failures, errors=errors,
         judgment_outcomes=judgment.outcomes, attributions=attributions,
+        invalid_model_votes=int("invalid_model_vote" in diagnostics),
     )

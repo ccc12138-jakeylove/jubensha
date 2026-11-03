@@ -38,6 +38,9 @@ def lint_script(script: Script) -> LinterReport:
         for secret_id in character.secret_ids:
             if secret_id not in script.secrets or script.secrets[secret_id].owner_role_id != key:
                 issue("BROKEN_SECRET_OWNER", "blocker", key, f"秘密 {secret_id} 归属不一致")
+        for act_id in character.private_goals_by_act:
+            if act_id not in acts:
+                issue("BROKEN_GOAL_ACT", "blocker", key, f"分幕目标引用了不存在的幕 {act_id}")
     for key, knowledge in script.knowledge.items():
         if key not in script.characters or knowledge.role_id != key:
             issue("BROKEN_KNOWLEDGE_REFERENCE", "blocker", key, "认知切片与角色不匹配")
@@ -120,6 +123,8 @@ def lint_script(script: Script) -> LinterReport:
                 reachable.add(clue_id)
                 del pending[clue_id]
                 changed = True
+    order_by_act = {act.act_id: act.order for act in script.acts}
+    events_by_id = {event.event_id: event for event in script.truth_events}
     for clue_id, clue in script.clues.items():
         if clue.clue_id != clue_id or clue.search_cost < 1:
             issue("INVALID_CLUE", "blocker", clue_id, "线索 ID 或搜证成本无效")
@@ -127,6 +132,17 @@ def lint_script(script: Script) -> LinterReport:
             issue("BROKEN_LOCATION_REFERENCE", "blocker", clue_id, "线索地点不存在")
         if not clue.reveals_event_ids and not clue.reveals_secret_ids:
             issue("ORPHAN_CLUE", "high", clue_id, "线索未指向事件或秘密")
+        valid_acts = [act_id for act_id in clue.act_available if act_id in order_by_act]
+        if not valid_acts:
+            issue("CLUE_WITHOUT_ACT", "blocker", clue_id, "线索没有可用的幕次")
+        else:
+            earliest = min(order_by_act[act_id] for act_id in valid_acts)
+            for event_id in clue.reveals_event_ids:
+                event = events_by_id.get(event_id)
+                if event is not None and order_by_act.get(event.act_id, 0) > earliest:
+                    issue("CLUE_REVEALS_LATER_ACT", "blocker", clue_id,
+                          f"线索最早在第 {earliest} 幕可搜查，却直接揭示第 "
+                          f"{order_by_act[event.act_id]} 幕事件 {event_id}，存在提前泄密")
         for event_id in clue.reveals_event_ids:
             if event_id not in event_ids:
                 issue("BROKEN_EVENT_REFERENCE", "blocker", clue_id, f"缺少事件 {event_id}")
@@ -136,6 +152,20 @@ def lint_script(script: Script) -> LinterReport:
     for clue_id in pending:
         issue("UNREACHABLE_CLUE", "blocker", clue_id, "地点、幕或前置条件使线索不可达",
               "检查地点开放幕和线索前置条件")
+    if len(script.acts) > 1 and not script.act_scope_reviewed:
+        first_order = min(order_by_act.values())
+        first_acts = {act_id for act_id, order in order_by_act.items() if order == first_order}
+        if script.clues and all(set(clue.act_available).issubset(first_acts)
+                                for clue in script.clues.values()):
+            issue("MULTI_ACT_SCOPE_UNREVIEWED", "high", script.script_id,
+                  "多幕本的线索均默认归入第一幕，尚未逐幕核对开放范围",
+                  "在校对配置中设置 act_clues，并确认 act_scope_reviewed")
+        unscoped_goals = [key for key, character in script.characters.items()
+                          if character.private_goals and not character.private_goals_by_act]
+        if unscoped_goals:
+            issue("MULTI_ACT_GOAL_SCOPE_UNREVIEWED", "high", script.script_id,
+                  f"角色 {', '.join(unscoped_goals)} 的目标未按幕拆分，可能提前泄露后续剧情",
+                  "为角色设置 private_goals_by_act，或确认目标确实全幕公开")
     for secret in script.secrets.values():
         if not secret.exposed_by_clue_ids:
             issue("UNEXPOSED_SECRET", "medium", secret.secret_id, "秘密没有直接暴露线索")
@@ -197,7 +227,7 @@ def lint_script(script: Script) -> LinterReport:
     public_terms = text_terms(" ".join([act.public_narrative for act in script.acts]
                                        + [character.public_profile for character in script.characters.values()]))
     motive_terms = text_terms(" ".join(goal for role_id in culprits
-                                       for goal in script.characters[role_id].private_goals)) - public_terms
+                                       for goal in script.characters[role_id].all_goals())) - public_terms
     motive_clues = ([clue_id for clue_id in script.win_condition.motive_evidence_clue_ids
                      if clue_id in reachable] if script.win_condition.motive_evidence_clue_ids else
                     [clue_id for clue_id in reachable
