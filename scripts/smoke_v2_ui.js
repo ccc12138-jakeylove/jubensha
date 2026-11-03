@@ -20,6 +20,11 @@ const path = require('path');
       name: review ? (process.env.SMOKE_REVIEW_TITLE || '雾港谜案') : '剧本库', exact: true,
     }).waitFor({ timeout: 30000 });
     await page.getByRole('button', { name: review ? '保存字段' : '开局', exact: true }).waitFor({ timeout: 30000 });
+    if (review && process.env.SMOKE_PREVIEW === '1') {
+      await page.getByRole('button', { name: '本机试玩', exact: true }).click();
+      await page.getByText('草稿试玩：内容和结果尚未通过正式验收。').waitFor({ timeout: 30000 });
+      await page.getByRole('button', { name: '开始阅读', exact: true }).waitFor({ timeout: 30000 });
+    }
     if (review && process.env.SMOKE_STATEMENTS === '1') {
       await page.getByText('角色陈述校对', { exact: true }).click();
       await page.getByRole('checkbox').first().waitFor({ timeout: 30000 });

@@ -104,6 +104,18 @@ def show_review(scripts: ScriptStore, draft_id: str) -> None:
         return
     st.title(draft["title"])
     st.caption(draft["status"])
+    if draft["status"] == "draft" and st.button("本机试玩", key=f"preview_{draft_id}"):
+        try:
+            script = scripts.load_preview(draft_id)
+            game_id = uuid4().hex
+            scripts.events.create_game(game_id, script.script_id, script.acts[0].act_id)
+            scripts.audit("author", "preview_draft", draft_id, game_id)
+            st.query_params.clear()
+            st.query_params["game"] = game_id
+            st.query_params["preview"] = "1"
+            st.rerun()
+        except Exception as exc:
+            st.error(str(exc))
     if draft["status"] == "draft" and draft.get("source_upload_id"):
         with scripts.events.connect() as db:
             rights = db.execute("SELECT authorized_at,rights_source,distribution_scope FROM script_uploads WHERE upload_id=?",

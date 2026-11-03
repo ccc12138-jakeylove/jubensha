@@ -354,6 +354,20 @@ class ScriptStore:
             raise ValueError("script is not published")
         return Script.model_validate(draft["ir"])
 
+    def load_preview(self, script_id: str) -> Script:
+        draft = self.get_draft(script_id)
+        if draft["status"] != "draft" or not draft["source_upload_id"]:
+            raise ValueError("uploaded draft required for preview")
+        with self.events.connect() as db:
+            rights = db.execute("SELECT authorized_at,distribution_scope FROM script_uploads WHERE upload_id=?",
+                                (draft["source_upload_id"],)).fetchone()
+        if rights is None or not rights["authorized_at"] or rights["distribution_scope"] != "authorized":
+            raise ValueError("script usage rights are not confirmed")
+        script = Script.model_validate(draft["ir"])
+        if not lint_script(script).passed:
+            raise ValueError("linter blockers must be resolved before preview")
+        return script
+
     def load_playable(self, script_id: str) -> Script:
         draft = self.get_draft(script_id)
         if draft["status"] not in ("published", "archived"):

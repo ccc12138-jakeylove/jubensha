@@ -52,7 +52,13 @@ def main():
         st.query_params["view"] = "eval"
         st.rerun()
     script_id = store.game_script_id(game_id) if game_id else fixture.script_id
-    script = fixture if script_id == fixture.script_id else scripts.load_playable(script_id)
+    if script_id == fixture.script_id:
+        script = fixture
+    elif st.query_params.get("preview") == "1":
+        script = scripts.load_preview(script_id)
+        st.warning("草稿试玩：内容和结果尚未通过正式验收。")
+    else:
+        script = scripts.load_playable(script_id)
     st.title(script.title)
     if not game_id:
         if st.button("开局"):

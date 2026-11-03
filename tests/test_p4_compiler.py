@@ -394,3 +394,14 @@ def test_local_only_package_cannot_be_confirmed_or_published(script, tmp_path):
     assert row["distribution_scope"] == "local_only"
     scripts.authorize_draft(script.script_id, "user explicitly authorized use and publication")
     assert scripts.publish(script.script_id).script_id == script.script_id
+
+
+def test_authorized_structural_draft_can_preview_without_publication(script, tmp_path):
+    store = EventStore(tmp_path / "preview.db")
+    scripts = ScriptStore(store)
+    upload_id = scripts.save_upload("case.json", b"{}", rights_source="user authorization")
+    draft = compile_document("case.json", script.model_dump_json().encode(), store)
+    scripts.save_draft(draft, upload_id)
+    assert scripts.load_preview(script.script_id).script_id == script.script_id
+    with pytest.raises(ValueError, match="not published"):
+        scripts.load_published(script.script_id)
