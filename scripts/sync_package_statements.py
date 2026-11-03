@@ -23,7 +23,9 @@ def main() -> None:
         except KeyError:
             continue
         updated = merge_statement_candidates(current["ir"], extracted.ir)
+        updated["parser_meta"]["source_files"] = extracted.ir["parser_meta"]["source_files"]
         scripts.update_ir(script_id, json.dumps(updated, ensure_ascii=False))
+        scripts.refresh_draft_source(script_id, extracted.source_text)
         print(f"{extracted.ir['title']}: {sum(len(item['statements']) for item in updated['knowledge'].values())} candidate statements")
 
 

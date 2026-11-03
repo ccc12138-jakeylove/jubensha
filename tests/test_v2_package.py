@@ -74,3 +74,22 @@ def test_statement_refresh_preserves_author_approval(tmp_path):
     refreshed = compile_package(tmp_path / "MIRAGE_测试本")
     merged = merge_statement_candidates(prior, refreshed.ir)
     assert merged["knowledge"]["R01"]["statements"][0]["approved"]
+
+
+def test_package_reads_all_role_statements_and_readable_exports(tmp_path):
+    folder = write_package(tmp_path)
+    inner = folder / "测试本"
+    role = {"Story": "".join(f"第{i}条完整角色经历。" for i in range(20)),
+            "Script": "你目睹了大厅里的争执。"}
+    (inner / "人物剧本.json").write_text(json.dumps({"甲": role}, ensure_ascii=False), encoding="utf-8")
+    (folder / "甲.txt").write_text("角色本可阅读正文", encoding="utf-8")
+    draft = compile_package(folder)
+    assert len(draft.ir["knowledge"]["R01"]["statements"]) == 21
+    assert "角色本可阅读正文" in draft.source_text
+    assert any(path.endswith("甲.txt") for path in draft.ir["parser_meta"]["source_files"])
+
+
+def test_package_statements_keep_act_scope(tmp_path):
+    draft = compile_package(write_package(tmp_path, two_acts=True))
+    statements = draft.ir["knowledge"]["R01"]["statements"]
+    assert {item["act_id"] for item in statements} == {"A01", "A02"}

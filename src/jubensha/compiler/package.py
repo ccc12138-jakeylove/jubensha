@@ -38,7 +38,8 @@ def compile_package(folder: Path, *, genre: str = "本格") -> CompilationDraft:
     act_names, roles = _role_acts(roles_raw)
     if not roles or not clues_raw:
         raise ValueError("package needs rolebooks and clues")
-    files = [truth_file, role_file, clue_file]
+    readable_files = sorted(path for path in folder.glob("*.txt") if path != truth_file)
+    files = [truth_file, role_file, clue_file, *readable_files]
     source_parts = []
     offsets = {}
     offset = 0
@@ -69,18 +70,19 @@ def compile_package(folder: Path, *, genre: str = "本格") -> CompilationDraft:
         }
         statements = []
         start, end = offsets[role_file]
-        for part in parts:
+        for part_index, part in enumerate(parts):
             if not isinstance(part, dict):
                 continue
             for field in ("Story", "Script"):
                 for sentence in re.split(r"(?<=[。！？.!?])\s*", str(part.get(field, ""))):
                     sentence = sentence.strip()
-                    if not 12 <= len(sentence) <= 300 or len(statements) >= 12:
+                    if not sentence:
                         continue
                     anchor = json.dumps(sentence[:40], ensure_ascii=False)[1:-1]
                     found = source_text.find(anchor, start, end)
                     statements.append({"statement_id": f"K{role_id}_{len(statements) + 1:02d}",
                                        "text": sentence, "approved": False,
+                                       "act_id": act_ids[part_index],
                                        "source_doc": str(role_file) if found >= 0 else None,
                                        "source_span": [found, found + len(anchor)] if found >= 0 else None})
         knowledge[role_id] = {"role_id": role_id, "knows_event_ids": [],
@@ -229,7 +231,8 @@ def merge_statement_candidates(current: dict, extracted: dict) -> dict:
         existing = {item["statement_id"]: item
                     for item in updated["knowledge"][role_id].get("statements", [])}
         candidates = extracted["knowledge"][role_id].get("statements", [])
-        merged = [existing.get(item["statement_id"], item) for item in candidates]
+        merged = [item | {"approved": existing.get(item["statement_id"], {}).get("approved", False)}
+                  for item in candidates]
         merged.extend(item for key, item in existing.items()
                       if key not in {candidate["statement_id"] for candidate in candidates})
         updated["knowledge"][role_id]["statements"] = merged

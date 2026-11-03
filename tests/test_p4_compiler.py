@@ -392,3 +392,5 @@ def test_local_only_package_cannot_be_confirmed_or_published(script, tmp_path):
                          (upload_id,)).fetchone()
     assert row["authorized_at"] is None
     assert row["distribution_scope"] == "local_only"
+    scripts.authorize_draft(script.script_id, "user explicitly authorized use and publication")
+    assert scripts.publish(script.script_id).script_id == script.script_id

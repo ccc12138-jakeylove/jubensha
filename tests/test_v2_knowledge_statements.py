@@ -32,3 +32,15 @@ def test_only_approved_sourced_statements_can_be_spoken_and_cited(script, state,
     assert not check_invariants(script, [event])
     bad = event.model_copy(update={"payload": event.payload | {"evidence_ids": ["KCHEN_02"]}})
     assert any("unauthorized NPC citation" in item for item in check_invariants(script, [bad]))
+
+
+def test_future_act_statement_is_hidden_from_npc(script, state):
+    script = script.model_copy(deep=True)
+    script.acts.append(script.acts[0].model_copy(update={"act_id": "future_act", "order": 2}))
+    script.knowledge["chen_yanqiu"].statements = [
+        KnowledgeStatement(statement_id="NOW", text="当前幕已知。", approved=True,
+                           act_id=script.acts[0].act_id),
+        KnowledgeStatement(statement_id="LATER", text="下一幕才知道。", approved=True,
+                           act_id="future_act"),
+    ]
+    assert [item["statement_id"] for item in build_perception(script, state, "chen_yanqiu").known_statements] == ["NOW"]

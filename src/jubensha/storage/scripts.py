@@ -139,6 +139,19 @@ class ScriptStore:
             db.execute("INSERT INTO audit_log (actor,action,target,detail) VALUES ('local','restrict_to_local',?,'user specified local validation only')",
                        (script_id,))
 
+    def authorize_draft(self, script_id: str, rights_source: str) -> None:
+        if not rights_source.strip():
+            raise ValueError("rights source is required")
+        with self.events.connect() as db:
+            row = db.execute("SELECT source_upload_id FROM scripts WHERE script_id=? AND status='draft'",
+                             (script_id,)).fetchone()
+            if row is None or not row["source_upload_id"]:
+                raise ValueError("uploaded draft required")
+            db.execute("UPDATE script_uploads SET distribution_scope='authorized',authorized_at=CURRENT_TIMESTAMP,rights_source=? WHERE upload_id=?",
+                       (rights_source.strip(), row["source_upload_id"]))
+            db.execute("INSERT INTO audit_log (actor,action,target,detail) VALUES ('author','authorize_draft',?,?)",
+                       (script_id, rights_source.strip()))
+
     def get_upload(self, upload_id: str) -> tuple[str, bytes]:
         with self.events.connect() as db:
             row = db.execute("SELECT filename,content FROM script_uploads WHERE upload_id=?",
@@ -243,6 +256,13 @@ class ScriptStore:
                                       message=issue.message)
                     db.execute("INSERT INTO review_items (script_id,item_json,resolved) VALUES (?,?,0)",
                                (script_id, item.model_dump_json()))
+
+    def refresh_draft_source(self, script_id: str, source_text: str) -> None:
+        with self.events.connect() as db:
+            cursor = db.execute("UPDATE scripts SET source_text=? WHERE script_id=? AND status='draft'",
+                                (source_text, script_id))
+            if cursor.rowcount != 1:
+                raise ValueError("draft required")
 
     def revisions(self, script_id: str) -> list[dict]:
         with self.events.connect() as db:

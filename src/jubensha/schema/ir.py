@@ -110,6 +110,7 @@ class KnowledgeStatement(IRModel):
     statement_id: str
     text: str
     approved: bool = False
+    act_id: str | None = None
     source_doc: str | None = None
     source_span: tuple[int, int] | None = None
 
