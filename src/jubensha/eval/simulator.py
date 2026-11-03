@@ -83,7 +83,12 @@ def _choose_search(script: Script, store: EventStore, game_id: str,
                                             for key in state.public_clue_ids
                                             + next(iter(state.seats.values())).private_clue_ids]})
             for location_id, clue in available:
-                if location_id == choice.get("location_id") and clue.clue_id == choice.get("clue_id"):
+                if script.search_mode == "location_bundle":
+                    # 地点包一次揭示该地点全部线索，模型只需选对地点；
+                    # 它回填的 clue_id 可能只是选项里的代表线索。
+                    if location_id == choice.get("location_id"):
+                        return location_id, clue
+                elif location_id == choice.get("location_id") and clue.clue_id == choice.get("clue_id"):
                     return location_id, clue
         except (ValueError, KeyError):
             pass
@@ -182,11 +187,10 @@ def simulate_game(script: Script, store: EventStore, persona: Persona,
                 play("talk", role_id=role_id, text=question)
             if persona != "meta" or model_driven:
                 budget = next(iter(store.load(game_id, act.search_points_budget).seats.values())).search_points
-                if not model_driven:
-                    searches = 1
-                else:
-                    divisor = {"aggressive": 5, "passive": 7, "meta": 8, "speedrun": 12}[persona]
-                    searches = min(budget, max(2, (len(script.clues) + divisor - 1) // divisor))
+                # 搜证次数按可用预算和线索总量缩放；离线模式也一样，
+                # 否则每次只搜一个地点，无法验证多地点搜证和预算扣减。
+                divisor = {"aggressive": 5, "passive": 7, "meta": 8, "speedrun": 12}[persona]
+                searches = min(budget, max(2, (len(script.clues) + divisor - 1) // divisor))
                 first_choice = _choose_search(script, store, game_id, persona, model_driven)
                 if first_choice:
                     play("enter_search")
@@ -202,6 +206,12 @@ def simulate_game(script: Script, store: EventStore, persona: Persona,
                             play("search", location_id=location_id, clue_id=clue.clue_id)
                     play("leave_search")
             play("enter_confront")
+            if not act.requires_vote:
+                # 命案前的序幕不投票，直接从对质阶段推进。
+                if index == len(script.acts) - 1:
+                    raise ValueError("最后一幕必须投票")
+                play("next_act")
+                continue
             if model_driven:
                 provisional_role, _, provisional_evidence = _choose_vote(
                     script, store, game_id, persona, True, role_id, diagnostics)

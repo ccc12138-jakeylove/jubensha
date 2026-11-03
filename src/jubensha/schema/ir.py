@@ -27,6 +27,9 @@ class Act(IRModel):
     public_narrative: str
     allowed_phases: list[Phase]
     entry_condition: str | None = None
+    # 非终幕是否必须以投票结束。命案发生前的序幕可设为 False，
+    # 从 CONFRONT 直接进入下一幕；终幕仍必须投票。
+    requires_vote: bool = True
     search_points_budget: int
     private_chat_budget: int = 2
     director_proactive_after: int | None = Field(default=None, ge=1)

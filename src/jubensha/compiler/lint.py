@@ -15,15 +15,23 @@ def lint_script(script: Script) -> LinterReport:
     event_ids = {event.event_id for event in script.truth_events}
     if not script.acts or len(acts) != len(script.acts) or len({act.order for act in script.acts}) != len(script.acts):
         issue("INVALID_ACT_ORDER", "blocker", script.script_id, "幕缺失或幕编号/顺序重复")
+    ordered_acts = sorted(script.acts, key=lambda act: act.order)
     for act in script.acts:
-        if not {"read", "act_open", "vote"}.issubset({phase.value for phase in act.allowed_phases}):
+        # 对质阶段是所有幕的必经阶段；投票只对需要投票的幕是必需的。
+        required_phases = {"read", "act_open", "confront"}
+        if act.requires_vote:
+            required_phases.add("vote")
+        if not required_phases.issubset({phase.value for phase in act.allowed_phases}):
             issue("ACT_MISSING_REQUIRED_PHASE", "blocker", act.act_id,
-                  "幕缺少阅读、公聊或投票阶段")
+                  "幕缺少阅读、公聊、对质或投票阶段")
         thresholds = (act.director_proactive_after, act.director_hint_after,
                       act.director_critical_after)
         if all(value is not None for value in thresholds) and not thresholds[0] < thresholds[1] < thresholds[2]:
             issue("INVALID_DIRECTOR_THRESHOLDS", "blocker", act.act_id,
                   "导演阈值应按主动发言、提示、关键提示递增")
+    if ordered_acts and not ordered_acts[-1].requires_vote:
+        issue("FINAL_ACT_REQUIRES_VOTE", "blocker", ordered_acts[-1].act_id,
+              "最后一幕必须投票，不能直接结束")
     if any(clue_id not in script.clues for clue_id in script.win_condition.motive_evidence_clue_ids):
         issue("BROKEN_MOTIVE_REFERENCE", "blocker", script.script_id,
               "动机证据引用了不存在的线索")

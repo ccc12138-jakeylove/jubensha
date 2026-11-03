@@ -72,7 +72,7 @@ def build_turn_graph(script: Script, store: EventStore, observer=None):
             "enter_confront": {Phase.ACT_OPEN}, "leave_confront": {Phase.CONFRONT},
             "confront_talk": {Phase.CONFRONT},
             "vote": {Phase.CONFRONT}, "recap": {Phase.VOTE},
-            "next_act": {Phase.VOTE}, "end": {Phase.RECAP},
+            "next_act": {Phase.VOTE, Phase.CONFRONT}, "end": {Phase.RECAP},
         }
         if action not in valid or state.phase not in valid[action]:
             raise ValueError(f"action {action} is unavailable in {state.phase.value}")
@@ -106,6 +106,13 @@ def build_turn_graph(script: Script, store: EventStore, observer=None):
             raise ValueError("尚有下一幕")
         if action == "next_act" and act == ordered_acts[-1]:
             raise ValueError("已经是最后一幕")
+        if action == "vote" and not act.requires_vote:
+            raise ValueError("本幕不进行投票，请从对质阶段进入下一幕")
+        if action == "next_act":
+            # 投票幕必须走完 VOTE；命案前的非投票幕从 CONFRONT 直接推进。
+            expected = Phase.VOTE if act.requires_vote else Phase.CONFRONT
+            if state.phase != expected:
+                raise ValueError(f"本幕需在 {expected.value} 阶段进入下一幕")
         if action == "search_bundle" and script.search_mode != "location_bundle":
             raise ValueError("this script does not use location search bundles")
         if action == "search" and script.search_mode == "location_bundle":
@@ -335,7 +342,9 @@ def build_turn_graph(script: Script, store: EventStore, observer=None):
         }
         target = destinations.get(data["action"])
         if target:
-            transition(state.phase, target, last_act=current_act(state) == ordered_acts[-1])
+            act = current_act(state)
+            transition(state.phase, target, last_act=act == ordered_acts[-1],
+                       requires_vote=act.requires_vote)
             payload = {"to": target.value}
             if data["action"] == "next_act":
                 next_act = ordered_acts[ordered_acts.index(current_act(state)) + 1]

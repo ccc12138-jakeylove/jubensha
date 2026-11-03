@@ -68,6 +68,18 @@ def test_review_adds_truth_without_overwriting_source_draft(tmp_path):
     assert "truth_events.E01" in updated["provenance"]
 
 
+def test_review_derives_clue_event_links_from_truth_events(tmp_path):
+    draft = compile_package(write_package(tmp_path))
+    review = {"script_id": draft.ir["script_id"], "culprit_role_ids": ["R01"],
+              "truth_events": [{"event_id": "E01", "act_id": "A01", "t_start": 0,
+                                "t_end": 1, "location_id": "L01", "actor_ids": ["R01"],
+                                "action": "甲留下便条", "observable": [], "hidden": [],
+                                "evidence_clue_ids": ["C001"]}],
+              "clue_defaults": {"act_available": ["A01"]}}
+    updated = apply_review(draft.ir, review, draft.source_text)
+    assert updated["clues"]["C001"]["reveals_event_ids"] == ["E01"]
+
+
 def test_statement_refresh_preserves_author_approval(tmp_path):
     draft = compile_package(write_package(tmp_path))
     prior = draft.ir

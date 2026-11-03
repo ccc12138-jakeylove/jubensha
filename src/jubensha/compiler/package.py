@@ -191,10 +191,13 @@ def compile_package(folder: Path, *, genre: str = "本格") -> CompilationDraft:
     acts = [{"act_id": act_id, "order": index, "title": name,
              "public_narrative": "案件开始，请阅读角色本并展开调查。",
              "allowed_phases": ["read", "act_open", "search", "private", "confront", "vote"],
-             "search_points_budget": 5}
+             "requires_vote": True, "search_points_budget": 5}
             for index, (act_id, name) in enumerate(zip(act_ids, act_names), 1)]
     tags = content_tags(source_text)
     reconcile_warnings = ["真相事件和线索关联需由作者校对"]
+    if len(act_ids) > 1:
+        reconcile_warnings.append(
+            "请核对每幕是否需要投票；命案前的序幕可设 requires_vote=false")
     if len(act_ids) > 1 and not grouped_by_act:
         reconcile_warnings.append(
             "线索表未按幕分组，已保守归入第一幕；请逐幕核对 act_available")
@@ -271,6 +274,16 @@ def apply_review(ir: dict, review: dict, source_text: str = "") -> dict:
                     "confidence": 0.7,
                 }
             updated["truth_events"].append(event)
+        # 真相事件是线索关联的权威来源：先清空旧的事件关联，再按事件重建，
+        # 避免作者改了事件后线索仍指向已删除的事件。
+        for clue in updated["clues"].values():
+            clue["reveals_event_ids"] = []
+        for event in updated["truth_events"]:
+            for clue_id in event.get("evidence_clue_ids", []):
+                if clue_id in updated["clues"]:
+                    clue = updated["clues"][clue_id]
+                    if event["event_id"] not in clue["reveals_event_ids"]:
+                        clue["reveals_event_ids"].append(event["event_id"])
     for role_id in review.get("culprit_role_ids", []):
         updated["characters"][role_id]["is_culprit"] = True
     for role_id, goals in review.get("character_goals", {}).items():

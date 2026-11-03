@@ -39,7 +39,7 @@ P4 可在侧栏进入剧本库，上传 `.txt/.md/.docx/.pdf` 或完整 IR JSON�
 
 P5 公聊支持“面向全场”一次询问两位 NPC；导演只读取公开轨迹，安排 NPC 主动发言、公开线索反应及分级卡关提示。阶段和线索仍由代码裁定。
 
-P6 用 `uv run python scripts/run_evals.py --output docs/V1_EVAL_REPORT.md` 运行四策略各 5 局离线评测；配置模型后加 `--live-model`。评测页可查看运行与案例。人工标注至少 20 组 `human,model` CSV 后，用 `uv run python scripts/calibrate_judge.py labels.csv` 检查 κ 是否达到 0.6。
+P6 用 `uv run python scripts/run_evals.py --output docs/V1_EVAL_REPORT.md` 运行四策略各 5 局离线评测；配置模型后加 `--live-model`。评测页可查看运行与案例。人工标注至少 20 组 `human,model` CSV 后，用 `uv run python scripts/calibrate_judge.py labels.csv` 检查 κ 是否达到 0.6。需要可共享的多幕回归样本时，使用完全合成的 `fixtures/multiact_demo.json`；本机素材指纹与复现说明见 `docs/LOCAL_CORPUS_MANIFEST.md`。
 
 P7 已验证同局双席的私密事件隔离、`custom` 胜利条件、未知事件回放和记忆后端替换接口。这些是 V1 扩展钩子；实时多人房间不在 V1 范围。复盘使用逐项判分，上传剧本在开局前显示检测到的内容提示。
 

@@ -78,6 +78,9 @@ def main():
         st.error("对局不存在")
         return
     seat = current_seat(state, seat_id)
+    ordered_acts = sorted(script.acts, key=lambda act: act.order)
+    current_act = next(act for act in ordered_acts if act.act_id == state.act_id)
+    is_last_act = current_act == ordered_acts[-1]
     graph = build_turn_graph(script, store)
 
     def play(action: str, **kwargs):
@@ -123,13 +126,15 @@ def main():
             submitted = st.form_submit_button("询问")
         if submitted and question.strip():
             play("talk", role_id=role_id, text=question)
-        col1, col2, col3 = st.columns(3)
-        if col1.button("进入搜证"):
-            play("enter_search")
         act = next(act for act in script.acts if act.act_id == state.act_id)
-        if col2.button("进入私聊", disabled=not role_id or state.private_chats_used >= act.private_chat_budget):
+        col1, col2, col3 = st.columns(3)
+        if col1.button("进入搜证", disabled=Phase.SEARCH not in act.allowed_phases):
+            play("enter_search")
+        if col2.button("进入私聊",
+                       disabled=(Phase.PRIVATE not in act.allowed_phases or not role_id
+                                 or state.private_chats_used >= act.private_chat_budget)):
             play("enter_private", role_id=role_id)
-        if col3.button("进入对质"):
+        if col3.button("进入对质", disabled=Phase.CONFRONT not in act.allowed_phases):
             play("enter_confront")
     elif state.phase == Phase.SEARCH:
         st.subheader("搜证")
@@ -175,7 +180,7 @@ def main():
         if st.button("结束私聊"):
             play("leave_private")
     elif state.phase == Phase.CONFRONT:
-        st.subheader("对质与指认")
+        st.subheader("对质与指认" if current_act.requires_vote else "对质")
         dialogue(Phase.CONFRONT)
         role_id = st.selectbox("你指认谁", list(script.characters),
                                format_func=lambda x: script.characters[x].display_name)
@@ -187,15 +192,19 @@ def main():
             confronted = st.form_submit_button("追问")
         if confronted and question.strip():
             play("confront_talk", role_id=role_id, text=question, evidence_ids=evidence)
-        motive = st.text_area("动机与推理")
-        if st.button("提交指认"):
-            play("vote", role_id=role_id, motive=motive, evidence_ids=evidence)
+        if current_act.requires_vote:
+            motive = st.text_area("动机与推理")
+            if st.button("提交指认"):
+                play("vote", role_id=role_id, motive=motive, evidence_ids=evidence)
+        else:
+            st.info("本幕不进行指认，对质结束后进入下一幕。")
+            if st.button("进入下一幕"):
+                play("next_act")
         if st.button("继续公聊"):
             play("leave_confront")
     elif state.phase == Phase.VOTE:
         st.write("指认已记录。")
-        act_ids = [act.act_id for act in sorted(script.acts, key=lambda act: act.order)]
-        if state.act_id == act_ids[-1]:
+        if is_last_act:
             if st.button("查看复盘"):
                 play("recap")
         elif st.button("进入下一幕"):

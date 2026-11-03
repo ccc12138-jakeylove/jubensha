@@ -30,7 +30,9 @@ def check_invariants(script: Script, events: list[GameEvent]) -> list[str]:
         if event.type == EventType.PHASE_CHANGE:
             target = Phase(event.payload["to"])
             try:
-                transition(phase, target, last_act=(act_id == max(script.acts, key=lambda act: act.order).act_id))
+                transition(phase, target,
+                           last_act=(act_id == max(script.acts, key=lambda act: act.order).act_id),
+                           requires_vote=act_by_id[act_id].requires_vote)
             except ValueError:
                 failures.append(f"illegal phase transition at seq {event.seq}")
             phase = target

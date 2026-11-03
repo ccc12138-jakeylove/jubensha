@@ -26,8 +26,13 @@ TRANSITIONS = {
 }
 
 
-def transition(current: Phase, target: Phase, *, last_act: bool = True) -> Phase:
-    if target not in TRANSITIONS[current]:
+def transition(current: Phase, target: Phase, *, last_act: bool = True,
+               requires_vote: bool = True) -> Phase:
+    # 非投票幕允许从对质阶段直接进入下一幕，其余转移仍按 TRANSITIONS 校验。
+    advancing_without_vote = (
+        current == Phase.CONFRONT and target == Phase.READ
+        and not last_act and not requires_vote)
+    if target not in TRANSITIONS[current] and not advancing_without_vote:
         raise ValueError(f"illegal phase transition: {current} -> {target}")
     if current == Phase.VOTE and (target == Phase.RECAP) != last_act:
         raise ValueError("vote transition does not match act position")

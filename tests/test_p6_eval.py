@@ -4,6 +4,7 @@ from jubensha.eval.invariants import check_invariants
 from jubensha.eval.metrics import cohen_kappa
 from jubensha.eval.simulator import PERSONAS, _choose_search, _choose_vote, simulate_game
 from jubensha.schema.events import EventType, GameEvent
+from jubensha.schema.ir import Act
 from jubensha.engine.fsm import Phase
 from jubensha.storage.events import EventStore
 
@@ -17,6 +18,30 @@ def test_four_personas_complete(script, tmp_path, monkeypatch):
     assert all(result.proactive_count >= 2 for result in results)
     assert all(result.judgment_outcomes for result in results)
     assert all(result.attributions for result in results if not result.win)
+
+
+def test_offline_simulator_searches_beyond_one_target(script, tmp_path, monkeypatch):
+    monkeypatch.delenv("LLM_MODEL", raising=False)
+    store = EventStore(tmp_path / "multi_search.db")
+    result = simulate_game(script, store, "speedrun")
+    found = [event for event in store.events(result.game_id) if event.type == EventType.CLUE_FOUND]
+    assert result.completed and not result.errors
+    assert len(found) >= 2
+
+
+def test_simulator_skips_vote_for_non_vote_act(script, tmp_path, monkeypatch):
+    monkeypatch.delenv("LLM_MODEL", raising=False)
+    script = script.model_copy(deep=True)
+    script.acts[0].requires_vote = False
+    script.acts.append(Act(act_id="A2", order=2, title="终幕", public_narrative="真相揭晓。",
+                           allowed_phases=[Phase.READ, Phase.ACT_OPEN, Phase.CONFRONT, Phase.VOTE],
+                           search_points_budget=2))
+    store = EventStore(tmp_path / "non_vote_eval.db")
+    result = simulate_game(script, store, "speedrun")
+    assert result.completed and not result.errors
+    votes = [event for event in store.events(result.game_id) if event.type == EventType.VOTE]
+    assert len(votes) == 1
+    assert store.load(result.game_id, 2).phase == Phase.END
 
 
 def test_invariant_gate_catches_duplicate_clue(script):
@@ -81,6 +106,19 @@ def test_search_planner_sees_only_presearch_label(script, tmp_path, monkeypatch)
 
     monkeypatch.setattr("jubensha.eval.simulator._model_json", plan)
     assert _choose_search(script, store, "g", "speedrun", True)[1].clue_id == "C02"
+
+
+def test_bundle_search_accepts_any_clue_at_chosen_location(script, tmp_path, monkeypatch):
+    script = script.model_copy(deep=True)
+    script.search_mode = "location_bundle"
+    store = EventStore(tmp_path / "bundle_planner.db")
+    store.create_game("g", script.script_id, script.acts[0].act_id)
+    monkeypatch.setattr("jubensha.eval.simulator.configured", lambda: True)
+    # 地点包只按地点结算；模型回填同地点另一条线索时不能退回兜底地点。
+    monkeypatch.setattr("jubensha.eval.simulator._model_json",
+                        lambda *args: {"location_id": "room_302", "clue_id": "C01"})
+    location_id, _ = _choose_search(script, store, "g", "speedrun", True)
+    assert location_id == "room_302"
 
 
 def test_vote_planner_preserves_valid_model_choice_without_word_overlap(script, tmp_path, monkeypatch):
