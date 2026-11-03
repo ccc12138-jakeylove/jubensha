@@ -1,6 +1,8 @@
 .venv/
 .env
 *.db
+*.db-shm
+*.db-wal
 eval_report.md
 judge_review.csv
 probe_review.csv

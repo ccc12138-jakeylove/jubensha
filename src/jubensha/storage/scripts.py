@@ -98,6 +98,8 @@ class ScriptStore:
                     rights_source: str = "author confirmed", rights_contact: str = "") -> str:
         if not rights_source.strip():
             raise ValueError("rights source is required")
+        if len(content) > 10_000_000:
+            raise ValueError("document exceeds 10 MB")
         upload_id = uuid4().hex
         with self.events.connect() as db:
             db.execute("INSERT INTO script_uploads (upload_id,filename,content,authorized_at,rights_source,rights_contact) VALUES (?,?,?,CURRENT_TIMESTAMP,?,?)",

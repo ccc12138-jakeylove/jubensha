@@ -302,6 +302,8 @@ def _reconcile(ir: dict) -> list[ReviewItem]:
 
 def compile_document(filename: str, content: bytes, store: EventStore) -> CompilationDraft:
     text = read_document(filename, content)
+    if len(text) > 300_000:
+        raise ValueError("document text exceeds 300000 characters")
     segments = segment_document(filename, text)
     reviews: list[ReviewItem] = []
     scans: list[dict] = []

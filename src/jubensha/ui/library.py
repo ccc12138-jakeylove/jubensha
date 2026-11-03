@@ -57,10 +57,13 @@ def show_library(fixture: Script, events: EventStore, scripts: ScriptStore) -> N
         st.rerun()
     st.subheader("导入剧本")
     upload = st.file_uploader("剧本文件", type=["txt", "md", "docx", "pdf", "json"])
+    oversized = bool(upload and upload.size > 10_000_000)
+    if oversized:
+        st.error("文件超过 10 MB")
     authorized = st.checkbox("我确认拥有此剧本的使用权或已获授权")
     rights_source = st.text_input("授权来源", placeholder="本人原创或授权链接")
     rights_contact = st.text_input("授权联系人（选填）")
-    if upload is not None and st.button("编译并保存草稿", disabled=not authorized or not rights_source.strip()):
+    if upload is not None and st.button("编译并保存草稿", disabled=oversized or not authorized or not rights_source.strip()):
         try:
             upload_id = scripts.save_upload(upload.name, upload.getvalue(),
                                             rights_source, rights_contact)

@@ -268,6 +268,15 @@ def test_no_model_produces_reviewable_failure(tmp_path, monkeypatch):
     assert any(item.conflict_type == "missing_model" for item in result.review_items)
 
 
+def test_upload_and_text_limits_are_enforced(tmp_path):
+    store = EventStore(tmp_path / "limits.db")
+    scripts = ScriptStore(store)
+    with pytest.raises(ValueError, match="10 MB"):
+        scripts.save_upload("huge.txt", b"x" * 10_000_001)
+    with pytest.raises(ValueError, match="300000"):
+        compile_document("long.txt", b"x" * 300_001, store)
+
+
 def test_content_rating_is_visible_in_review(tmp_path, monkeypatch):
     monkeypatch.setattr("jubensha.compiler.pipeline.configured", lambda: False)
     result = compile_document("horror.txt", "旅馆里有血腥的尸块。".encode(),
