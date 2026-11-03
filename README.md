@@ -24,6 +24,17 @@ cp .env.example .env
 uv run streamlit run src/jubensha/ui/app.py
 ```
 
+## 宣传页（React 前端）
+
+`frontend/` 是独立的 React + Vite 站点，用于对外宣传与预约，与对局主界面互不影响。
+
+```bash
+cd frontend && npm install && npm run build      # 产物输出到 frontend/dist
+uv run uvicorn jubensha.web.app:app --host 127.0.0.1 --port 8100
+```
+
+打开 `http://127.0.0.1:8100`。页面提供三套风格（暗夜 / 旧档 / 冷雾，右上角色点切换）、合成雨夜 BGM、角色翻转卡、线索墙、时间线、指认判定与预约表单；所有头像、纸纹、红绳、图钉、印章均由 CSS 渐变绘制，不引用外部图片。开发时可用 `cd frontend && npm run dev`（会把 `/api` 代理到 8100）。接口只有三个：`GET /api/show/script`、`POST /api/show/accuse`、`POST /api/show/signup`，预约写入 `show_signups` 表，不触碰对局数据。
+
 V2 预览可单独设置 `PG_SCHEMA=jubensha_v2`（或指向另一个库），避免与固定 V1 服务共用数据。V2 API 使用 `uv run uvicorn jubensha.api.app:app --host 127.0.0.1 --port 8001`；`/api/v2/compile-jobs` 与 `/api/v2/eval-runs` 提交后台任务，轮询对应 ID。`AUTHOR_TOKEN` 控制角色认知回放视角。`LLM_MODEL_COMPILER`、`LLM_MODEL_NPC`、`LLM_MODEL_JUDGE`、`LLM_MODEL_GUARD` 可分别路由模型；`LLM_MODEL_STRONG` 只用于编译末次修复。三本完整授权 IR 准备好后，运行 `uv run python scripts/eval_gate.py fixture1.json fixture2.json fixture3.json` 做模型回归；该命令不能替代人工标注验收。
 
 本地多文件剧本目录可用 `uv run python scripts/import_packages.py <目录> --save` 导入为草稿；作者真相与关键线索须校对。`scripts/complete_package.py` 可将 Git 忽略的本地校对配置应用于草稿；未确认授权的草稿即使 lint 通过也不能发布。

@@ -1,0 +1,95 @@
+/* ==========================================================================
+   主题变量：三套风格共用同一套语义变量，切换 <html data-theme> 即可换肤。
+   - noir     默认：黑底 + 暗红 + 暗金 + 旧纸黄
+   - sepia    做旧档案：泛黄纸 + 褐墨
+   - midnight 冷夜：深蓝黑 + 暗金
+   ========================================================================== */
+
+:root {
+  /* 字体栈：标题走宋体系，正文走系统黑体，等宽体用于编号与时间 */
+  --font-title: "Songti SC", "STSong", "Noto Serif SC", "Source Han Serif SC", serif;
+  --font-kai: "Kaiti SC", "STKaiti", "KaiTi", "Songti SC", serif;
+  --font-body: system-ui, -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
+  --font-mono: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+
+  --radius-sm: 6px;
+  --radius-md: 12px;
+  --radius-lg: 20px;
+
+  --nav-h: 64px;
+  --maxw: 1160px;
+
+  --ease: cubic-bezier(0.22, 0.61, 0.36, 1);
+}
+
+/* ---------- 主题一：noir ---------- */
+html[data-theme='noir'] {
+  --bg: #0a0908;
+  --bg-2: #12100e;
+  --paper: #efe4cf;
+  --paper-2: #e2d3b8;
+  --paper-ink: #241d16;
+  --ink: #efe6d6;
+  --ink-soft: #b7a892;
+  --ink-dim: #7d7264;
+  --accent: #8c1c22;
+  --accent-soft: #b8323a;
+  --gold: #c9a227;
+  --gold-soft: #e2c264;
+  --line: rgba(201, 162, 39, 0.26);
+  --card: rgba(239, 228, 207, 0.045);
+  --card-strong: rgba(239, 228, 207, 0.08);
+  --glow: radial-gradient(circle at 50% 0%, rgba(201, 162, 39, 0.16), transparent 62%);
+  --noise-opacity: 0.05;
+  --shadow: 0 18px 48px rgba(0, 0, 0, 0.55);
+  --pin: #8c1c22;
+  --string: #7d1a1f;
+}
+
+/* ---------- 主题二：sepia ---------- */
+html[data-theme='sepia'] {
+  --bg: #241b12;
+  --bg-2: #2f2418;
+  --paper: #e8d9bb;
+  --paper-2: #d8c29a;
+  --paper-ink: #2a1f14;
+  --ink: #efe1c6;
+  --ink-soft: #c3ac86;
+  --ink-dim: #8d7a5e;
+  --accent: #9a3b22;
+  --accent-soft: #c05232;
+  --gold: #b8892f;
+  --gold-soft: #d9ae5c;
+  --line: rgba(184, 137, 47, 0.32);
+  --card: rgba(232, 217, 187, 0.06);
+  --card-strong: rgba(232, 217, 187, 0.1);
+  --glow: radial-gradient(circle at 50% 0%, rgba(184, 137, 47, 0.2), transparent 62%);
+  --noise-opacity: 0.07;
+  --shadow: 0 18px 48px rgba(20, 12, 4, 0.6);
+  --pin: #9a3b22;
+  --string: #8a2f1c;
+}
+
+/* ---------- 主题三：midnight ---------- */
+html[data-theme='midnight'] {
+  --bg: #060a10;
+  --bg-2: #0b121c;
+  --paper: #dde6f0;
+  --paper-2: #c3d0de;
+  --paper-ink: #101821;
+  --ink: #dfe8f2;
+  --ink-soft: #9db0c4;
+  --ink-dim: #6b7d90;
+  --accent: #7f1d2b;
+  --accent-soft: #a52b3c;
+  --gold: #c8a95a;
+  --gold-soft: #e0c98d;
+  --line: rgba(200, 169, 90, 0.26);
+  --card: rgba(221, 230, 240, 0.05);
+  --card-strong: rgba(221, 230, 240, 0.09);
+  --glow: radial-gradient(circle at 50% 0%, rgba(200, 169, 90, 0.14), transparent 62%);
+  --noise-opacity: 0.045;
+  --shadow: 0 18px 48px rgba(0, 4, 10, 0.62);
+  --pin: #a52b3c;
+  --string: #7f1d2b;
+}
