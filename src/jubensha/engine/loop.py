@@ -19,7 +19,7 @@ from jubensha.schema.events import EventType, GameEvent
 from jubensha.schema.claims import Claim
 from jubensha.schema.ir import Script
 from jubensha.storage.events import EventStore
-from jubensha.storage.checkpoints import SQLiteCheckpointer
+from jubensha.storage.checkpoints import PgCheckpointer
 
 
 class TurnState(TypedDict, total=False):
@@ -379,7 +379,7 @@ def build_turn_graph(script: Script, store: EventStore, observer=None):
     graph.add_edge("director_check", "memory_write")
     graph.add_edge("memory_write", "phase_check")
     graph.add_edge("phase_check", END)
-    return graph.compile(checkpointer=SQLiteCheckpointer(store.path))
+    return graph.compile(checkpointer=PgCheckpointer(store.path, schema=store.schema))
 
 
 def run_turn(graph, store: EventStore, script: Script, data: TurnState):

@@ -148,7 +148,7 @@ def test_v2_delete_draft_removes_uploaded_document(tmp_path, script):
     assert client.delete("/api/v2/scripts/delete_case").status_code == 200
     assert client.get("/api/scripts/delete_case/review").status_code == 404
     with EventStore(db_path).connect() as db:
-        assert db.execute("SELECT 1 FROM script_uploads WHERE upload_id=?", (upload_id,)).fetchone() is None
+        assert db.execute("SELECT 1 FROM script_uploads WHERE upload_id=%s", (upload_id,)).fetchone() is None
 
 
 def test_v2_game_creation_idempotency(tmp_path):

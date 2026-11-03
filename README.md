@@ -1,6 +1,6 @@
 # 通用型剧本杀 AI Agent
 
-单机剧本杀引擎与作者工作台。当前开发分支为 V2.0-beta；正式验收缺口见 [V2 状态](docs/V2_STATUS.md)。Python 3.11+，使用 uv。
+单机剧本杀引擎与作者工作台。当前开发分支为 V2.0-beta；正式验收缺口见 [V2 状态](docs/V2_STATUS.md)。Python 3.11+，使用 uv，数据存储为 PostgreSQL 15+（单机也需要数据库实例）。
 
 ## 安装
 
@@ -8,13 +8,15 @@
 uv sync
 ```
 
+先准备一个可连的 PostgreSQL 实例并建库（如 `createdb jubensha`），连接串写进 `.env` 的 `PG_DSN`；启动时会自动建表，无需手动执行 DDL。
+
 ## 配置
 
-```powershell
-Copy-Item .env.example .env
+```bash
+cp .env.example .env
 ```
 
-设置 `LLM_MODEL`、`LLM_API_KEY`、`LLM_BASE_URL` 环境变量。也可不配置模型，此时 NPC 使用固定的角色内回避回答。`.env` 不会自动加载，可在 PowerShell 会话设置对应环境变量。
+在 `.env` 中设置 `PG_DSN`（PostgreSQL 连接串，如 `postgresql://user:pw@127.0.0.1:5432/jubensha`），以及 `LLM_MODEL`、`LLM_API_KEY`、`LLM_BASE_URL`（DeepSeek 示例：`LLM_MODEL=deepseek/deepseek-flash`，key 到 platform.deepseek.com 申请）。`.env` 由 `src/jubensha/__init__.py` 在包导入时自动加载，已在 shell 或 IDE 中设置的同名环境变量优先，无需手动 export。也可不配置模型，此时 NPC 使用固定的角色内回避回答。
 
 ## 运行
 
@@ -22,11 +24,11 @@ Copy-Item .env.example .env
 uv run streamlit run src/jubensha/ui/app.py
 ```
 
-V2 预览可单独设置 `GAME_DB=game_v2.db`，避免与固定 V1 服务共用数据。V2 API 使用 `uv run uvicorn jubensha.api.app:app --host 127.0.0.1 --port 8001`；`/api/v2/compile-jobs` 与 `/api/v2/eval-runs` 提交后台任务，轮询对应 ID。`AUTHOR_TOKEN` 控制角色认知回放视角。`LLM_MODEL_COMPILER`、`LLM_MODEL_NPC`、`LLM_MODEL_JUDGE`、`LLM_MODEL_GUARD` 可分别路由模型；`LLM_MODEL_STRONG` 只用于编译末次修复。三本完整授权 IR 准备好后，运行 `uv run python scripts/eval_gate.py fixture1.json fixture2.json fixture3.json` 做模型回归；该命令不能替代人工标注验收。
+V2 预览可单独设置 `PG_SCHEMA=jubensha_v2`（或指向另一个库），避免与固定 V1 服务共用数据。V2 API 使用 `uv run uvicorn jubensha.api.app:app --host 127.0.0.1 --port 8001`；`/api/v2/compile-jobs` 与 `/api/v2/eval-runs` 提交后台任务，轮询对应 ID。`AUTHOR_TOKEN` 控制角色认知回放视角。`LLM_MODEL_COMPILER`、`LLM_MODEL_NPC`、`LLM_MODEL_JUDGE`、`LLM_MODEL_GUARD` 可分别路由模型；`LLM_MODEL_STRONG` 只用于编译末次修复。三本完整授权 IR 准备好后，运行 `uv run python scripts/eval_gate.py fixture1.json fixture2.json fixture3.json` 做模型回归；该命令不能替代人工标注验收。
 
 本地多文件剧本目录可用 `uv run python scripts/import_packages.py <目录> --save` 导入为草稿；作者真相与关键线索须校对。`scripts/complete_package.py` 可将 Git 忽略的本地校对配置应用于草稿；未确认授权的草稿即使 lint 通过也不能发布。
 
-`uv run pytest` 运行测试。对局事件和 LangGraph 节点快照保存到当前目录的 `game.db`，URL 中的 `game` 参数用于续局。搜证按线索成本扣点，地点容量和前置线索由代码校验；每幕可用点数和私聊次数由 fixture 决定。
+`uv run pytest` 运行测试（每个测试自建独立 schema，结束自动清理，需要可连的 `PG_DSN`）。对局事件和 LangGraph 节点快照写入 PostgreSQL，URL 中的 `game` 参数用于续局。搜证按线索成本扣点，地点容量和前置线索由代码校验；每幕可用点数和私聊次数由 fixture 决定。
 
 P2 中，NPC 只接收角色认知视图；声明随事件追加。输出先做确定性泄密检查；配置 `LLM_MODEL` 时再经 LiteLLM 做语义判定。未配置模型的测试只能验证结构隔离与静态拦截，不能代表真实模型的泄密率。
 V1 默认 `NPC_GENERATION_MODE=grounded`：模型选择授权证据 ID，代码呈现事实；`freeform` 仅用于对照实验，需接受更高的幻觉与拦截风险。

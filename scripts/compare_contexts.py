@@ -47,7 +47,7 @@ def main():
             result[mode]["reply"] = generate(store, game_id, node, "npc.ab.v1", messages)
             result[mode]["elapsed_ms"] = round((time.perf_counter() - started) * 1000)
             with store.connect() as db:
-                trace = db.execute("SELECT input_tokens,output_tokens,cost_usd FROM llm_traces WHERE game_id=? AND node=? ORDER BY id DESC LIMIT 1",
+                trace = db.execute("SELECT input_tokens,output_tokens,cost_usd FROM llm_traces WHERE game_id=%s AND node=%s ORDER BY id DESC LIMIT 1",
                                    (game_id, node)).fetchone()
             if trace:
                 result[mode]["actual_input_tokens"] = trace["input_tokens"]

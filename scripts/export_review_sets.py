@@ -41,7 +41,7 @@ def main():
                                "question": source["prompt"], "reply": actual.get("reply", ""),
                                "detector_hit": case["hit"], "human_leak": ""})
     with events.connect() as db:
-        run = db.execute("SELECT results_json FROM eval_runs WHERE run_id=?", (args.run_id,)).fetchone()
+        run = db.execute("SELECT results_json FROM eval_runs WHERE run_id=%s", (args.run_id,)).fetchone()
     for result in json.loads(run[0]) if run else []:
         preceding = ""
         for event in events.events(result["game_id"]):

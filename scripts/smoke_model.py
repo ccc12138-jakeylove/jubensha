@@ -21,7 +21,7 @@ role_id = next(iter(script.characters))
 result = run_turn(graph, store, script, {"game_id": game_id, "action": "talk",
                                              "role_id": role_id, "text": "案发时你在哪里？"})
 with store.connect() as db:
-    traces = [dict(row) for row in db.execute("SELECT node,prompt_version,input_tokens,output_tokens,latency_ms FROM llm_traces WHERE game_id=?",
+    traces = [dict(row) for row in db.execute("SELECT node,prompt_version,input_tokens,output_tokens,latency_ms FROM llm_traces WHERE game_id=%s",
                                                (game_id,))]
 print(json.dumps({"game_id": game_id, "reply": result.get("reply", ""),
                   "leak_blocked": result.get("leak_blocked", False), "traces": traces}, ensure_ascii=False))

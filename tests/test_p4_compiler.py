@@ -185,13 +185,13 @@ def test_ir_11_metadata_is_optional_for_10_fixture(script, tmp_path):
     store = ScriptStore(EventStore(tmp_path / "metadata.db"))
     store.register_fixture(script)
     with store.events.connect() as db:
-        before = db.execute("SELECT content_hash FROM scripts WHERE script_id=?",
+        before = db.execute("SELECT content_hash FROM scripts WHERE script_id=%s",
                             (script.script_id,)).fetchone()[0]
     store.register_fixture(upgraded)
     with store.events.connect() as db:
-        after = db.execute("SELECT ir_version,content_hash,difficulty FROM scripts WHERE script_id=?",
+        after = db.execute("SELECT ir_version,content_hash,difficulty FROM scripts WHERE script_id=%s",
                            (script.script_id,)).fetchone()
-        versions = db.execute("SELECT count(*) FROM script_versions WHERE script_id=?",
+        versions = db.execute("SELECT count(*) FROM script_versions WHERE script_id=%s",
                               (script.script_id,)).fetchone()[0]
     assert after[0] == "1.1" and after[1] != before and after[2] == 3
     assert versions == 2
@@ -388,7 +388,7 @@ def test_local_only_package_cannot_be_confirmed_or_published(script, tmp_path):
     with pytest.raises(ValueError, match="usage rights"):
         scripts.publish(script.script_id)
     with store.connect() as db:
-        row = db.execute("SELECT authorized_at,distribution_scope FROM script_uploads WHERE upload_id=?",
+        row = db.execute("SELECT authorized_at,distribution_scope FROM script_uploads WHERE upload_id=%s",
                          (upload_id,)).fetchone()
     assert row["authorized_at"] is None
     assert row["distribution_scope"] == "local_only"

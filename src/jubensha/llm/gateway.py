@@ -15,6 +15,22 @@ def configured() -> bool:
     return bool(os.getenv("LLM_MODEL"))
 
 
+# 推理型模型默认带思维链：NPC 单轮 max_tokens 很小，思考会占满预算导致正文为空。
+# deepseek/ollama 都支持在请求体里关闭；需要更长推理时设 LLM_THINKING=on。
+_THINKING_OFF = {
+    "ollama": {"think": False},
+    "ollama_chat": {"think": False},
+    "deepseek": {"thinking": {"type": "disabled"}},
+}
+
+
+def _thinking_options(model: str) -> dict:
+    if os.getenv("LLM_THINKING", "off").lower() in ("on", "1", "true", "yes"):
+        return {}
+    body = _THINKING_OFF.get(model.split("/", 1)[0])
+    return {"extra_body": dict(body)} if body else {}
+
+
 def model_for(node: str) -> tuple[str, str]:
     if node == "compiler_repair" and os.getenv("LLM_MODEL_STRONG"):
         return os.environ["LLM_MODEL_STRONG"], "repair_escalation"
@@ -43,7 +59,7 @@ def generate(store: EventStore, game_id: str, node: str, prompt_version: str,
                     cache_hit=True)
         return cached
     try:
-        options = {"extra_body": {"think": False}} if model.startswith(("ollama/", "ollama_chat/")) else {}
+        options = _thinking_options(model)
         if json_mode:
             options["response_format"] = {"type": "json_object"}
         response = completion(model=model, messages=messages,

@@ -1,129 +1,92 @@
-import json
-import sqlite3
+import os
 from pathlib import Path
 from uuid import uuid4
 
 from jubensha.schema.events import GameEvent
 from jubensha.schema.state import GameState, SeatState
 from jubensha.engine.fsm import Phase
+from jubensha.storage import db as pg
 
 
 class EventStore:
-    def __init__(self, path: str | Path):
-        self.path = str(path)
-        with self.connect() as db:
-            db.execute("PRAGMA journal_mode=WAL")
-            db.executescript("""
-                CREATE TABLE IF NOT EXISTS games (
-                    game_id TEXT PRIMARY KEY, script_id TEXT NOT NULL, act_id TEXT NOT NULL,
-                    seat_id TEXT NOT NULL, created_at TEXT DEFAULT CURRENT_TIMESTAMP
-                );
-                CREATE TABLE IF NOT EXISTS game_seats (
-                    game_id TEXT NOT NULL, seat_id TEXT NOT NULL, role_id TEXT,
-                    PRIMARY KEY (game_id, seat_id)
-                );
-                CREATE TABLE IF NOT EXISTS game_create_keys (
-                    idempotency_key TEXT PRIMARY KEY, script_id TEXT NOT NULL,
-                    game_id TEXT NOT NULL
-                );
-                CREATE TABLE IF NOT EXISTS game_events (
-                    game_id TEXT NOT NULL, seq INTEGER NOT NULL, event_json TEXT NOT NULL,
-                    PRIMARY KEY (game_id, seq)
-                );
-                CREATE TRIGGER IF NOT EXISTS events_no_update BEFORE UPDATE ON game_events
-                BEGIN SELECT RAISE(ABORT, 'game_events is append-only'); END;
-                CREATE TRIGGER IF NOT EXISTS events_no_delete BEFORE DELETE ON game_events
-                BEGIN SELECT RAISE(ABORT, 'game_events is append-only'); END;
-                CREATE TABLE IF NOT EXISTS llm_traces (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT, game_id TEXT NOT NULL,
-                    node TEXT NOT NULL, prompt_version TEXT NOT NULL,
-                    input_tokens INTEGER NOT NULL, output_tokens INTEGER NOT NULL,
-                    latency_ms INTEGER NOT NULL, cost_usd REAL,
-                    created_at TEXT DEFAULT CURRENT_TIMESTAMP
-                );
-                CREATE TABLE IF NOT EXISTS guard_cases (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT, game_id TEXT NOT NULL,
-                    role_id TEXT NOT NULL, question TEXT NOT NULL,
-                    candidate TEXT NOT NULL, reason TEXT NOT NULL,
-                    created_at TEXT DEFAULT CURRENT_TIMESTAMP
-                );
-                CREATE TABLE IF NOT EXISTS llm_cache (
-                    cache_key TEXT PRIMARY KEY, response_text TEXT NOT NULL,
-                    created_at TEXT DEFAULT CURRENT_TIMESTAMP
-                );
-            """)
-            columns = {row[1] for row in db.execute("PRAGMA table_info(llm_traces)")}
-            if "cost_usd" not in columns:
-                db.execute("ALTER TABLE llm_traces ADD COLUMN cost_usd REAL")
-            for column, data_type in {"model": "TEXT", "prompt_hash": "TEXT",
-                                      "route_reason": "TEXT", "cache_hit": "INTEGER DEFAULT 0"}.items():
-                if column not in columns:
-                    db.execute(f"ALTER TABLE llm_traces ADD COLUMN {column} {data_type}")
-            game_columns = {row[1] for row in db.execute("PRAGMA table_info(games)")}
-            if "is_preview" not in game_columns:
-                db.execute("ALTER TABLE games ADD COLUMN is_preview INTEGER NOT NULL DEFAULT 0")
-            db.execute("INSERT OR IGNORE INTO game_seats (game_id,seat_id,role_id) SELECT game_id,seat_id,NULL FROM games")
+    """对局事件与轨迹的 PostgreSQL 存储。
+
+    `path` 既可以是连接串（推荐），也可以忽略；非连接串一律回落到
+    `PG_DSN` / `GAME_DB` / 默认本地库，便于沿用旧的调用写法。
+    """
+
+    schema_override: str | None = None
+
+    def __init__(self, path: str | Path | None = None, *, schema: str | None = None):
+        self.dsn = pg.resolve_dsn(path)
+        self.schema = schema or type(self).schema_override or os.getenv("PG_SCHEMA") or None
+        self.path = self.dsn
+        with self.connect() as connection:
+            pg.ensure_schema(connection, self.dsn, self.schema)
 
     def connect(self):
-        db = sqlite3.connect(self.path, timeout=30)
-        db.row_factory = sqlite3.Row
-        db.execute("PRAGMA busy_timeout=30000")
-        return db
+        return pg.connect(self.dsn, self.schema)
 
     def create_game(self, game_id: str, script_id: str, act_id: str,
                     seat_id: str = "seat_1", *, is_preview: bool = False) -> None:
-        with self.connect() as db:
-            db.execute("INSERT INTO games (game_id,script_id,act_id,seat_id,is_preview) VALUES (?,?,?,?,?)",
-                       (game_id, script_id, act_id, seat_id, int(is_preview)))
-            db.execute("INSERT INTO game_seats VALUES (?,?,NULL)", (game_id, seat_id))
+        with self.connect() as connection:
+            connection.execute(
+                "INSERT INTO games (game_id,script_id,act_id,seat_id,is_preview) VALUES (%s,%s,%s,%s,%s)",
+                (game_id, script_id, act_id, seat_id, int(is_preview)))
+            connection.execute("INSERT INTO game_seats VALUES (%s,%s,NULL)", (game_id, seat_id))
 
     def create_game_idempotent(self, script_id: str, act_id: str, key: str,
                                seat_id: str = "seat_1") -> str:
-        with self.connect() as db:
-            db.execute("BEGIN IMMEDIATE")
-            existing = db.execute("SELECT script_id,game_id FROM game_create_keys WHERE idempotency_key=?",
-                                  (key,)).fetchone()
+        with self.connect() as connection:
+            connection.execute("SELECT pg_advisory_xact_lock(hashtext(%s))", (f"create:{key}",))
+            existing = connection.execute(
+                "SELECT script_id,game_id FROM game_create_keys WHERE idempotency_key=%s",
+                (key,)).fetchone()
             if existing:
                 if existing["script_id"] != script_id:
                     raise ValueError("idempotency key was used for a different script")
                 return existing["game_id"]
             game_id = uuid4().hex
-            db.execute("INSERT INTO games (game_id,script_id,act_id,seat_id) VALUES (?,?,?,?)",
-                       (game_id, script_id, act_id, seat_id))
-            db.execute("INSERT INTO game_seats VALUES (?,?,NULL)", (game_id, seat_id))
-            db.execute("INSERT INTO game_create_keys VALUES (?,?,?)", (key, script_id, game_id))
+            connection.execute("INSERT INTO games (game_id,script_id,act_id,seat_id) VALUES (%s,%s,%s,%s)",
+                               (game_id, script_id, act_id, seat_id))
+            connection.execute("INSERT INTO game_seats VALUES (%s,%s,NULL)", (game_id, seat_id))
+            connection.execute("INSERT INTO game_create_keys VALUES (%s,%s,%s)", (key, script_id, game_id))
             return game_id
 
     def add_seat(self, game_id: str, seat_id: str, role_id: str | None = None) -> None:
-        with self.connect() as db:
-            if not db.execute("SELECT 1 FROM games WHERE game_id=?", (game_id,)).fetchone():
+        with self.connect() as connection:
+            if not connection.execute("SELECT 1 FROM games WHERE game_id=%s", (game_id,)).fetchone():
                 raise KeyError(game_id)
-            db.execute("INSERT INTO game_seats VALUES (?,?,?)", (game_id, seat_id, role_id))
+            connection.execute("INSERT INTO game_seats VALUES (%s,%s,%s)", (game_id, seat_id, role_id))
 
     def append(self, event: GameEvent) -> GameEvent:
-        with self.connect() as db:
-            db.execute("BEGIN IMMEDIATE")
-            next_seq = db.execute("SELECT COALESCE(MAX(seq),0)+1 FROM game_events WHERE game_id=?",
-                                  (event.game_id,)).fetchone()[0]
+        with self.connect() as connection:
+            connection.execute("SELECT pg_advisory_xact_lock(hashtext(%s))", (f"seq:{event.game_id}",))
+            next_seq = connection.execute(
+                "SELECT COALESCE(MAX(seq),0)+1 FROM game_events WHERE game_id=%s",
+                (event.game_id,)).fetchone()[0]
             saved = event.model_copy(update={"seq": next_seq})
-            db.execute("INSERT INTO game_events VALUES (?,?,?)",
-                       (saved.game_id, saved.seq, saved.model_dump_json()))
+            connection.execute("INSERT INTO game_events VALUES (%s,%s,%s)",
+                               (saved.game_id, saved.seq, saved.model_dump_json()))
         return saved
 
     def events(self, game_id: str, up_to_seq: int | None = None) -> list[GameEvent]:
-        with self.connect() as db:
+        with self.connect() as connection:
             if up_to_seq is None:
-                rows = db.execute("SELECT event_json FROM game_events WHERE game_id=? ORDER BY seq", (game_id,))
+                rows = connection.execute(
+                    "SELECT event_json FROM game_events WHERE game_id=%s ORDER BY seq", (game_id,))
             else:
-                rows = db.execute("SELECT event_json FROM game_events WHERE game_id=? AND seq<=? ORDER BY seq",
-                                  (game_id, up_to_seq))
+                rows = connection.execute(
+                    "SELECT event_json FROM game_events WHERE game_id=%s AND seq<=%s ORDER BY seq",
+                    (game_id, up_to_seq))
             return [GameEvent.model_validate_json(row[0]) for row in rows]
 
     def events_for_seat(self, game_id: str, seat_id: str,
                         up_to_seq: int | None = None) -> list[GameEvent]:
-        with self.connect() as db:
-            seat = db.execute("SELECT role_id FROM game_seats WHERE game_id=? AND seat_id=?",
-                              (game_id, seat_id)).fetchone()
+        with self.connect() as connection:
+            seat = connection.execute(
+                "SELECT role_id FROM game_seats WHERE game_id=%s AND seat_id=%s",
+                (game_id, seat_id)).fetchone()
             if seat is None:
                 raise PermissionError("seat does not belong to this game")
         principals = {seat_id}
@@ -133,35 +96,39 @@ class EventStore:
                 if "*" in event.visible_to or principals.intersection(event.visible_to)]
 
     def latest_game(self) -> str | None:
-        with self.connect() as db:
-            row = db.execute("SELECT game_id FROM games ORDER BY created_at DESC, rowid DESC LIMIT 1").fetchone()
+        with self.connect() as connection:
+            row = connection.execute(
+                "SELECT game_id FROM games ORDER BY created_at DESC, game_id DESC LIMIT 1").fetchone()
             return row[0] if row else None
 
     def game_script_id(self, game_id: str) -> str:
-        with self.connect() as db:
-            row = db.execute("SELECT script_id FROM games WHERE game_id=?", (game_id,)).fetchone()
+        with self.connect() as connection:
+            row = connection.execute("SELECT script_id FROM games WHERE game_id=%s",
+                                     (game_id,)).fetchone()
             if row is None:
                 raise KeyError(game_id)
             return row[0]
 
     def is_preview_game(self, game_id: str) -> bool:
-        with self.connect() as db:
-            row = db.execute("SELECT is_preview FROM games WHERE game_id=?", (game_id,)).fetchone()
+        with self.connect() as connection:
+            row = connection.execute("SELECT is_preview FROM games WHERE game_id=%s",
+                                     (game_id,)).fetchone()
         if row is None:
             raise KeyError(game_id)
         return bool(row[0])
 
     def load(self, game_id: str, search_budget: int, private_budget: int = 2,
              up_to_seq: int | None = None) -> GameState:
-        with self.connect() as db:
-            game = db.execute("SELECT * FROM games WHERE game_id=?", (game_id,)).fetchone()
+        with self.connect() as connection:
+            game = connection.execute("SELECT * FROM games WHERE game_id=%s", (game_id,)).fetchone()
         if game is None:
             raise KeyError(game_id)
-        with self.connect() as db:
-            seat_rows = db.execute("SELECT seat_id,role_id FROM game_seats WHERE game_id=? ORDER BY rowid",
-                                   (game_id,)).fetchall()
+        with self.connect() as connection:
+            seat_rows = connection.execute(
+                "SELECT seat_id,role_id FROM game_seats WHERE game_id=%s ORDER BY seat_id",
+                (game_id,)).fetchall()
         seats = {row["seat_id"]: SeatState(seat_id=row["seat_id"], role_id=row["role_id"],
-                                            search_points=search_budget) for row in seat_rows}
+                                           search_points=search_budget) for row in seat_rows}
         if not seats:
             seats[game["seat_id"]] = SeatState(seat_id=game["seat_id"], search_points=search_budget)
         state = GameState(game_id=game_id, script_id=game["script_id"], act_id=game["act_id"], seats=seats)
@@ -219,36 +186,45 @@ class EventStore:
               output_tokens: int, latency_ms: int, cost_usd: float | None = None,
               model: str | None = None, prompt_hash: str | None = None,
               route_reason: str | None = None, cache_hit: bool = False) -> None:
-        with self.connect() as db:
-            db.execute("INSERT INTO llm_traces (game_id,node,prompt_version,input_tokens,output_tokens,latency_ms,cost_usd,model,prompt_hash,route_reason,cache_hit) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
-                       (game_id, node, prompt_version, input_tokens, output_tokens, latency_ms,
-                        cost_usd, model, prompt_hash, route_reason, int(cache_hit)))
+        with self.connect() as connection:
+            connection.execute(
+                "INSERT INTO llm_traces (game_id,node,prompt_version,input_tokens,output_tokens,"
+                "latency_ms,cost_usd,model,prompt_hash,route_reason,cache_hit) "
+                "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+                (game_id, node, prompt_version, input_tokens, output_tokens, latency_ms,
+                 cost_usd, model, prompt_hash, route_reason, int(cache_hit)))
 
     def guard_case(self, game_id: str, role_id: str, question: str,
                    candidate: str, reason: str) -> None:
-        with self.connect() as db:
-            db.execute("INSERT INTO guard_cases (game_id,role_id,question,candidate,reason) VALUES (?,?,?,?,?)",
-                       (game_id, role_id, question, candidate, reason))
+        with self.connect() as connection:
+            connection.execute(
+                "INSERT INTO guard_cases (game_id,role_id,question,candidate,reason) VALUES (%s,%s,%s,%s,%s)",
+                (game_id, role_id, question, candidate, reason))
 
     def guard_cases(self, game_id: str) -> list[dict]:
-        with self.connect() as db:
-            return [dict(row) for row in db.execute("SELECT * FROM guard_cases WHERE game_id=? ORDER BY id",
-                                                    (game_id,))]
+        with self.connect() as connection:
+            return [dict(row) for row in connection.execute(
+                "SELECT * FROM guard_cases WHERE game_id=%s ORDER BY id", (game_id,))]
 
     def cache_get(self, key: str) -> str | None:
-        with self.connect() as db:
-            row = db.execute("SELECT response_text FROM llm_cache WHERE cache_key=?", (key,)).fetchone()
+        with self.connect() as connection:
+            row = connection.execute("SELECT response_text FROM llm_cache WHERE cache_key=%s",
+                                     (key,)).fetchone()
         return row[0] if row else None
 
     def cache_put(self, key: str, response: str) -> None:
-        with self.connect() as db:
-            db.execute("INSERT OR REPLACE INTO llm_cache (cache_key,response_text) VALUES (?,?)",
-                       (key, response))
+        with self.connect() as connection:
+            connection.execute(
+                "INSERT INTO llm_cache (cache_key,response_text) VALUES (%s,%s) "
+                "ON CONFLICT (cache_key) DO UPDATE SET response_text=EXCLUDED.response_text",
+                (key, response))
 
     def trace_summary(self, script_id: str | None = None) -> list[dict]:
-        with self.connect() as db:
-            rows = [dict(row) for row in db.execute(
-                "SELECT t.node,t.model,t.input_tokens,t.output_tokens,t.latency_ms,t.cost_usd,t.cache_hit FROM llm_traces t LEFT JOIN games g ON g.game_id=t.game_id WHERE ? IS NULL OR g.script_id=?",
+        with self.connect() as connection:
+            rows = [dict(row) for row in connection.execute(
+                "SELECT t.node,t.model,t.input_tokens,t.output_tokens,t.latency_ms,t.cost_usd,"
+                "t.cache_hit FROM llm_traces t LEFT JOIN games g ON g.game_id=t.game_id "
+                "WHERE %s::text IS NULL OR g.script_id=%s::text",
                 (script_id, script_id))]
         groups: dict[tuple[str, str], list[dict]] = {}
         for row in rows:

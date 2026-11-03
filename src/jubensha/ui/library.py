@@ -118,7 +118,7 @@ def show_review(scripts: ScriptStore, draft_id: str) -> None:
             st.error(str(exc))
     if draft["status"] == "draft" and draft.get("source_upload_id"):
         with scripts.events.connect() as db:
-            rights = db.execute("SELECT authorized_at,rights_source,distribution_scope FROM script_uploads WHERE upload_id=?",
+            rights = db.execute("SELECT authorized_at,rights_source,distribution_scope FROM script_uploads WHERE upload_id=%s",
                                 (draft["source_upload_id"],)).fetchone()
         if rights and rights["distribution_scope"] == "local_only":
             st.warning("此剧本仅限本地验证，不能确认发行授权或发布。")

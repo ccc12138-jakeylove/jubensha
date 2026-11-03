@@ -1,4 +1,4 @@
-import sqlite3
+import os
 from collections.abc import Iterator, Sequence
 from typing import Any
 
@@ -10,33 +10,20 @@ from langgraph.checkpoint.base import (
     get_checkpoint_metadata,
 )
 
+from jubensha.storage import db as pg
 
-class SQLiteCheckpointer(BaseCheckpointSaver):
-    def __init__(self, path: str):
+
+class PgCheckpointer(BaseCheckpointSaver):
+    def __init__(self, path: str | None = None, *, schema: str | None = None):
         super().__init__()
-        self.path = path
-        with self.connect() as db:
-            db.executescript("""
-                CREATE TABLE IF NOT EXISTS graph_checkpoints (
-                    thread_id TEXT NOT NULL, namespace TEXT NOT NULL,
-                    checkpoint_id TEXT NOT NULL, parent_id TEXT,
-                    checkpoint_type TEXT NOT NULL, checkpoint_blob BLOB NOT NULL,
-                    metadata_type TEXT NOT NULL, metadata_blob BLOB NOT NULL,
-                    PRIMARY KEY (thread_id, namespace, checkpoint_id)
-                );
-                CREATE TABLE IF NOT EXISTS graph_writes (
-                    thread_id TEXT NOT NULL, namespace TEXT NOT NULL,
-                    checkpoint_id TEXT NOT NULL, task_id TEXT NOT NULL,
-                    write_index INTEGER NOT NULL, channel TEXT NOT NULL,
-                    value_type TEXT NOT NULL, value_blob BLOB NOT NULL,
-                    PRIMARY KEY (thread_id, namespace, checkpoint_id, task_id, write_index)
-                );
-            """)
+        self.dsn = pg.resolve_dsn(path)
+        self.schema = schema or os.getenv("PG_SCHEMA") or None
+        self.path = self.dsn
+        with self.connect() as connection:
+            pg.ensure_schema(connection, self.dsn, self.schema)
 
     def connect(self):
-        db = sqlite3.connect(self.path)
-        db.row_factory = sqlite3.Row
-        return db
+        return pg.connect(self.dsn, self.schema)
 
     def get_tuple(self, config):
         configurable = config["configurable"]
@@ -46,21 +33,24 @@ class SQLiteCheckpointer(BaseCheckpointSaver):
         with self.connect() as db:
             if checkpoint_id:
                 row = db.execute(
-                    "SELECT * FROM graph_checkpoints WHERE thread_id=? AND namespace=? AND checkpoint_id=?",
+                    "SELECT * FROM graph_checkpoints WHERE thread_id=%s AND namespace=%s "
+                    "AND checkpoint_id=%s",
                     (thread_id, namespace, checkpoint_id)).fetchone()
             else:
                 row = db.execute(
-                    "SELECT * FROM graph_checkpoints WHERE thread_id=? AND namespace=? ORDER BY checkpoint_id DESC LIMIT 1",
+                    "SELECT * FROM graph_checkpoints WHERE thread_id=%s AND namespace=%s "
+                    "ORDER BY checkpoint_id DESC LIMIT 1",
                     (thread_id, namespace)).fetchone()
             if row is None:
                 return None
             writes = db.execute(
-                "SELECT * FROM graph_writes WHERE thread_id=? AND namespace=? AND checkpoint_id=? ORDER BY write_index, task_id",
+                "SELECT * FROM graph_writes WHERE thread_id=%s AND namespace=%s AND checkpoint_id=%s "
+                "ORDER BY write_index, task_id",
                 (thread_id, namespace, row["checkpoint_id"])).fetchall()
         full_config = {"configurable": {"thread_id": thread_id, "checkpoint_ns": namespace,
                                         "checkpoint_id": row["checkpoint_id"]}}
         parent = ({"configurable": {"thread_id": thread_id, "checkpoint_ns": namespace,
-                                     "checkpoint_id": row["parent_id"]}} if row["parent_id"] else None)
+                                    "checkpoint_id": row["parent_id"]}} if row["parent_id"] else None)
         return CheckpointTuple(
             config=full_config,
             checkpoint=self.serde.loads_typed((row["checkpoint_type"], row["checkpoint_blob"])),
@@ -77,7 +67,8 @@ class SQLiteCheckpointer(BaseCheckpointSaver):
         namespace = config["configurable"].get("checkpoint_ns", "")
         with self.connect() as db:
             ids = [row[0] for row in db.execute(
-                "SELECT checkpoint_id FROM graph_checkpoints WHERE thread_id=? AND namespace=? ORDER BY checkpoint_id DESC",
+                "SELECT checkpoint_id FROM graph_checkpoints WHERE thread_id=%s AND namespace=%s "
+                "ORDER BY checkpoint_id DESC",
                 (thread_id, namespace))]
         count = 0
         for checkpoint_id in ids:
@@ -99,9 +90,14 @@ class SQLiteCheckpointer(BaseCheckpointSaver):
         checkpoint_type, checkpoint_blob = self.serde.dumps_typed(checkpoint)
         metadata_type, metadata_blob = self.serde.dumps_typed(get_checkpoint_metadata(config, metadata))
         with self.connect() as db:
-            db.execute("INSERT OR REPLACE INTO graph_checkpoints VALUES (?,?,?,?,?,?,?,?)",
-                       (thread_id, namespace, checkpoint["id"], configurable.get("checkpoint_id"),
-                        checkpoint_type, checkpoint_blob, metadata_type, metadata_blob))
+            db.execute(
+                "INSERT INTO graph_checkpoints VALUES (%s,%s,%s,%s,%s,%s,%s,%s) "
+                "ON CONFLICT (thread_id,namespace,checkpoint_id) DO UPDATE SET "
+                "parent_id=EXCLUDED.parent_id,checkpoint_type=EXCLUDED.checkpoint_type,"
+                "checkpoint_blob=EXCLUDED.checkpoint_blob,metadata_type=EXCLUDED.metadata_type,"
+                "metadata_blob=EXCLUDED.metadata_blob",
+                (thread_id, namespace, checkpoint["id"], configurable.get("checkpoint_id"),
+                 checkpoint_type, checkpoint_blob, metadata_type, metadata_blob))
         return {"configurable": {"thread_id": thread_id, "checkpoint_ns": namespace,
                                  "checkpoint_id": checkpoint["id"]}}
 
@@ -110,12 +106,14 @@ class SQLiteCheckpointer(BaseCheckpointSaver):
         with self.connect() as db:
             for index, (channel, value) in enumerate(writes):
                 value_type, value_blob = self.serde.dumps_typed(value)
-                db.execute("INSERT OR IGNORE INTO graph_writes VALUES (?,?,?,?,?,?,?,?)",
-                           (configurable["thread_id"], configurable.get("checkpoint_ns", ""),
-                            configurable["checkpoint_id"], task_id, WRITES_IDX_MAP.get(channel, index),
-                            channel, value_type, value_blob))
+                db.execute(
+                    "INSERT INTO graph_writes VALUES (%s,%s,%s,%s,%s,%s,%s,%s) "
+                    "ON CONFLICT DO NOTHING",
+                    (configurable["thread_id"], configurable.get("checkpoint_ns", ""),
+                     configurable["checkpoint_id"], task_id, WRITES_IDX_MAP.get(channel, index),
+                     channel, value_type, value_blob))
 
     def delete_thread(self, thread_id: str):
         with self.connect() as db:
-            db.execute("DELETE FROM graph_writes WHERE thread_id=?", (thread_id,))
-            db.execute("DELETE FROM graph_checkpoints WHERE thread_id=?", (thread_id,))
+            db.execute("DELETE FROM graph_writes WHERE thread_id=%s", (thread_id,))
+            db.execute("DELETE FROM graph_checkpoints WHERE thread_id=%s", (thread_id,))
