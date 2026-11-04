@@ -11,12 +11,19 @@ import Signup from './components/Signup.jsx'
 import Footer from './components/Footer.jsx'
 import Toast from './components/Toast.jsx'
 import { useBgm } from './components/BgmToggle.jsx'
+import Play from './play/Play.jsx'
 
 const THEMES = ['noir', 'sepia', 'midnight']
+
+/** 用 URL hash 区分「介绍页」和「对局台」，刷新后仍停在原页面 */
+function viewFromHash() {
+  return window.location.hash === '#play' ? 'play' : 'show'
+}
 
 export default function App() {
   const [data, setData] = useState(null)
   const [error, setError] = useState('')
+  const [view, setView] = useState(viewFromHash)
   const [theme, setTheme] = useState(() => {
     // 读取上次选择，非法值回落到默认主题，避免 data-theme 失效导致变量缺失
     const saved = localStorage.getItem('jubensha-theme')
@@ -30,6 +37,13 @@ export default function App() {
     document.documentElement.dataset.theme = theme
     localStorage.setItem('jubensha-theme', theme)
   }, [theme])
+
+  // 浏览器前进/后退时同步视图
+  useEffect(() => {
+    const onHash = () => setView(viewFromHash())
+    window.addEventListener('hashchange', onHash)
+    return () => window.removeEventListener('hashchange', onHash)
+  }, [])
 
   // 首屏数据：失败时给出可读提示，页面其余部分仍可浏览
   useEffect(() => {
@@ -56,11 +70,29 @@ export default function App() {
     return () => clearTimeout(timer)
   }, [toast])
 
-  const cycleTheme = useCallback(() => {
-    setTheme((current) => THEMES[(THEMES.indexOf(current) + 1) % THEMES.length])
+  const enterPlay = useCallback(() => {
+    window.location.hash = 'play'
+    setView('play')
+    window.scrollTo({ top: 0 })
+  }, [])
+
+  const exitPlay = useCallback(() => {
+    window.location.hash = ''
+    setView('show')
+    window.scrollTo({ top: 0 })
   }, [])
 
   const suspects = useMemo(() => data?.characters ?? [], [data])
+
+  // 对局台：独立布局，不显示宣传页导航
+  if (view === 'play') {
+    return (
+      <>
+        <Play show={data} onExit={exitPlay} />
+        <Toast toast={toast} onClose={() => setToast(null)} />
+      </>
+    )
+  }
 
   return (
     <>
@@ -72,12 +104,12 @@ export default function App() {
         title={data?.title || '雾港谜案'}
         theme={theme}
         onThemeChange={setTheme}
-        onThemeCycle={cycleTheme}
         bgm={bgm}
+        onStart={enterPlay}
       />
 
       <main>
-        <Hero data={data} />
+        <Hero data={data} onStart={enterPlay} />
 
         {error && (
           <div className="wrap" style={{ paddingBottom: 24 }}>

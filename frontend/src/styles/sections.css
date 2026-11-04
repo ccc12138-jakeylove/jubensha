@@ -1114,6 +1114,11 @@
     display: none;
   }
 
+  /* 小屏只保留「进入对局」主按钮，报名入口在页面底部 */
+  .nav__actions .btn--ghost {
+    display: none;
+  }
+
   .nav__actions .btn--primary {
     padding: 8px 14px;
     font-size: 12px;

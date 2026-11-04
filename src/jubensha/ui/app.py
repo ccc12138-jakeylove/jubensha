@@ -60,6 +60,12 @@ def main():
             st.warning("草稿试玩：内容和结果尚未通过正式验收。")
         else:
             script = scripts.load_playable(script_id)
+    except KeyError:
+        # 对局引用的剧本已被删除（例如清理过剧本库）：丢弃失效的 game 参数回到开局页
+        st.warning("上一局引用的剧本已不在库中，已回到开局页。")
+        if "game" in st.query_params:
+            del st.query_params["game"]
+        st.stop()
     except ValueError as exc:
         st.error(str(exc))
         return

@@ -1,8 +1,8 @@
-"""宣传页后端：只读展示数据 + 指认判定 + 预约登记。
+"""对外站点：宣传页 + 可直接对局的前端，后端复用既有对局 API。
 
 设计约束：
-- 不修改任何对局逻辑，只读取 Script（IR）与既有存储层；
-- 指认结果由剧本真相（is_culprit）判定，真相字段不外泄给前端；
+- 对局逻辑完全复用 `jubensha.api.app.create_app`，本文件不重写任何回合规则；
+- 只额外提供三个展示接口（剧本公开展示数据、指认判定、预约登记）与静态页面托管；
 - 预约写入独立的 show_signups 表，与对局数据隔离。
 """
 
@@ -10,13 +10,16 @@ import os
 from pathlib import Path
 from uuid import uuid4
 
-from fastapi import FastAPI, HTTPException
+from fastapi import HTTPException
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
+from jubensha.api.app import create_app as create_game_api
+from jubensha.engine.search import available_clues
 from jubensha.schema.ir import Script
 from jubensha.storage.events import EventStore
+from jubensha.storage.scripts import ScriptStore
 
 # 前端构建产物目录：<项目根>/frontend/dist
 DIST_DIR = Path(__file__).resolve().parents[3] / "frontend" / "dist"
@@ -50,17 +53,15 @@ def _identity(profile: str) -> str:
 
 
 def build_show(script: Script) -> dict:
-    """把 IR 压成宣传页需要的形状，刻意不含任何真相/私密字段。"""
+    """把 IR 压成前端需要的形状，刻意不含任何真相/私密字段。"""
     act = script.acts[0]
-
-    # 时间线：只暴露「旁观者能听见/看见」的描述，真相事件的 action 一律不外泄，
-    # 否则宣传页会直接写出凶手的作案过程。
     locations = script.locations
+
+    # 时间线：只用「公开线索」描述每一刻，真相事件的 action 一律不外泄
     timeline = []
     for event in sorted(script.truth_events, key=lambda item: item.t_start):
         visible = [text for text in event.observable if text.strip()]
         place = locations[event.location_id].display_name if event.location_id in locations else ""
-        # 优先用「公开线索」描述这一刻：既具体又不泄露真相
         evidence = [script.clues[cid] for cid in event.evidence_clue_ids if cid in script.clues]
         if evidence:
             title = evidence[0].display_name
@@ -99,10 +100,22 @@ def build_show(script: Script) -> dict:
             "name": clue.display_name,
             "text": clue.surface_text,
             "location": locations[clue.location_id].display_name if clue.location_id in locations else "",
+            "location_id": clue.location_id,
             "act": "、".join(clue.act_available),
             "cost": clue.search_cost,
             "red_herring": clue.red_herring,
         })
+
+    # 搜证地点：宣传页与对局台共用，只暴露名字与容量
+    scenes = [
+        {
+            "id": location.location_id,
+            "name": location.display_name,
+            "capacity": getattr(location, "capacity", None),
+            "clue_count": sum(1 for clue in script.clues.values() if clue.location_id == location.location_id),
+        }
+        for location in locations.values()
+    ]
 
     return {
         "script_id": script.script_id,
@@ -118,23 +131,56 @@ def build_show(script: Script) -> dict:
         "dossier_no": f"{script.script_id.upper()}-{act.act_id}",
         "characters": characters,
         "clues": clues,
+        "locations": scenes,
         "timeline": timeline,
         "sessions": [{"id": key, "label": label} for key, label in SESSIONS.items()],
     }
 
 
-def create_show_app(fixture_path: str | None = None, dsn: str | None = None) -> FastAPI:
-    """构造宣传页应用。fixture 与数据库均可通过环境变量覆盖。"""
+def create_show_app(fixture_path: str | None = None, dsn: str | None = None):
+    """构造站点：直接复用对局 API 应用，再叠加展示接口与静态页面。"""
     fixture_file = Path(fixture_path or os.getenv("SCRIPT_FIXTURE", "fixtures/wugang_01.json"))
     script = Script.model_validate_json(fixture_file.read_text(encoding="utf-8"))
-    store = EventStore(dsn or os.getenv("GAME_DB", "game.db"))
-    show = build_show(script)
+    database = dsn or os.getenv("GAME_DB", "game.db")
 
-    app = FastAPI(title="雾港档案室", docs_url=None, redoc_url=None)
+    # 复用既有对局应用（路由、异常格式、lifespan 全部继承）
+    app = create_game_api(db_path=database, fixture_path=str(fixture_file))
+    store = EventStore(database)
+    show = build_show(script)
 
     @app.get("/api/show/script")
     def get_show() -> dict:
         return show
+
+    @app.get("/api/show/search-options")
+    def search_options(game_id: str, location_id: str, seat_id: str = "seat_1") -> dict:
+        """搜证候选：复用引擎的 available_clues，前端只负责展示与选择。
+
+        规则（前置线索、地点容量、剩余点数）全部由引擎计算，本接口不重复实现。
+        """
+        try:
+            script_id = store.game_script_id(game_id)
+            state = store.load_for_seat(game_id, seat_id, script.acts[0].search_points_budget)
+        except KeyError as exc:
+            raise HTTPException(404, "对局或座位不存在") from exc
+        game_script = script if script_id == script.script_id else ScriptStore(store).load_playable(script_id)
+        location = game_script.locations.get(location_id)
+        candidates = available_clues(game_script, state, location_id, seat_id)
+        used = state.search_counts.get(location_id, 0)
+        capacity = getattr(location, "capacity_per_act", 0) if location else 0
+        return {
+            "mode": game_script.search_mode,
+            "location": location.display_name if location else "",
+            "remaining": max(0, capacity - used),
+            "options": [
+                {
+                    "clue_id": clue.clue_id,
+                    "label": clue.search_label or clue.display_name,
+                    "cost": clue.search_cost,
+                }
+                for clue in candidates
+            ],
+        }
 
     @app.post("/api/show/accuse")
     def accuse(payload: AccuseRequest) -> dict:

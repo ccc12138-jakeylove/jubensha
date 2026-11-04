@@ -3,7 +3,7 @@ import { scrollToId, useScrolled } from '../hooks.js'
 
 const THEME_LABEL = { noir: '暗夜', sepia: '旧档', midnight: '冷雾' }
 
-export default function Nav({ title, theme, onThemeChange, bgm }) {
+export default function Nav({ title, theme, onThemeChange, bgm, onStart }) {
   const scrolled = useScrolled(24)
 
   return (
@@ -37,8 +37,11 @@ export default function Nav({ title, theme, onThemeChange, bgm }) {
 
           <BgmToggle bgm={bgm} />
 
-          <button type="button" className="btn btn--primary" onClick={() => scrollToId('signup')}>
+          <button type="button" className="btn btn--ghost" onClick={() => scrollToId('signup')}>
             报名
+          </button>
+          <button type="button" className="btn btn--primary" onClick={onStart}>
+            进入对局
           </button>
         </div>
       </div>

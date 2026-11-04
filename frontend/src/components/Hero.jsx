@@ -4,7 +4,7 @@ import { useTypewriter, scrollToId } from '../hooks.js'
  * 首屏：剧本大标题（逐字打出）、副标题、悬疑文案与「翻开档案」入口。
  * 背景聚光灯与雨丝全部由 CSS 渐变绘制。
  */
-export default function Hero({ data }) {
+export default function Hero({ data, onStart }) {
   const title = data?.title || '雾港谜案'
   const subtitle = data?.subtitle || '暴雨封港的一夜，302 房间的门闩从内侧扣死'
   const tagline = data?.tagline || '五个人的证词互相咬合，只有一个人的时间线永远对不上。'
@@ -38,11 +38,11 @@ export default function Hero({ data }) {
         </p>
 
         <div className="hero__actions">
-          <button type="button" className="btn btn--primary" onClick={() => scrollToId('cast')}>
-            翻开档案
+          <button type="button" className="btn btn--primary" onClick={onStart}>
+            现在开局
           </button>
-          <button type="button" className="btn" onClick={() => scrollToId('clues')}>
-            查看线索墙
+          <button type="button" className="btn" onClick={() => scrollToId('cast')}>
+            先看角色
           </button>
         </div>
 
