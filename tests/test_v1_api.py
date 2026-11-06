@@ -179,3 +179,27 @@ def test_v2_turn_stream_reconnects_without_replaying_action(tmp_path):
     assert "id: 1\n" not in resumed.text
     assert len(EventStore(db_path).events(game_id)) == before
     assert client.post(path, json={"action": "read_done"}, headers=headers).status_code == 409
+
+
+def test_v2_stream_drains_terminal_event_after_stale_read(tmp_path, monkeypatch):
+    from jubensha.storage.streams import TurnStreams
+
+    original_after = TurnStreams.after
+    skipped = False
+
+    def stale_once(self, game_id, request_key, seq):
+        nonlocal skipped
+        events = original_after(self, game_id, request_key, seq)
+        if not skipped and any(item["kind"] == "done" for item in events):
+            skipped = True
+            return []
+        return events
+
+    monkeypatch.setattr(TurnStreams, "after", stale_once)
+    client = TestClient(create_app(str(tmp_path / "stale_stream.db")))
+    game_id = client.post("/api/v2/games", json={}).json()["game_id"]
+    result = client.post(f"/api/v2/games/{game_id}/turns?stream=true",
+                         json={"action": "begin"}, headers={"Idempotency-Key": "begin"})
+    assert result.status_code == 200
+    assert "event: done" in result.text
+    assert skipped

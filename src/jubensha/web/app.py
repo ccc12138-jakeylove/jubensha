@@ -10,8 +10,8 @@ import os
 from pathlib import Path
 from uuid import uuid4
 
-from fastapi import HTTPException
-from fastapi.responses import FileResponse
+from fastapi import HTTPException, Request
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
@@ -29,10 +29,6 @@ SESSIONS = {
     "sat-1400": "周六 14:00 · 下午场",
     "sat-1930": "周六 19:30 · 夜场",
 }
-
-
-class AccuseRequest(BaseModel):
-    suspect_id: str
 
 
 class SignupRequest(BaseModel):
@@ -53,32 +49,9 @@ def _identity(profile: str) -> str:
 
 
 def build_show(script: Script) -> dict:
-    """把 IR 压成前端需要的形状，刻意不含任何真相/私密字段。"""
+    """Only return information available before a game begins."""
     act = script.acts[0]
     locations = script.locations
-
-    # 时间线：只用「公开线索」描述每一刻，真相事件的 action 一律不外泄
-    timeline = []
-    for event in sorted(script.truth_events, key=lambda item: item.t_start):
-        visible = [text for text in event.observable if text.strip()]
-        place = locations[event.location_id].display_name if event.location_id in locations else ""
-        evidence = [script.clues[cid] for cid in event.evidence_clue_ids if cid in script.clues]
-        if evidence:
-            title = evidence[0].display_name
-            detail = "　".join(clue.surface_text.strip().rstrip("。；") + "。" for clue in evidence[:2])
-        elif visible:
-            title = visible[0]
-            detail = "；".join(visible[1:])
-        else:
-            title = place or "记录缺失"
-            detail = ""
-        timeline.append({
-            "id": event.event_id,
-            "offset": event.t_start,
-            "title": title,
-            "detail": detail,
-            "place": place,
-        })
 
     characters = []
     for role_id, role in script.characters.items():
@@ -93,35 +66,25 @@ def build_show(script: Script) -> dict:
             "goal_count": len(role.private_goals),
         })
 
-    clues = []
-    for clue_id, clue in script.clues.items():
-        clues.append({
-            "clue_id": clue_id,
-            "name": clue.display_name,
-            "text": clue.surface_text,
-            "location": locations[clue.location_id].display_name if clue.location_id in locations else "",
-            "location_id": clue.location_id,
-            "act": "、".join(clue.act_available),
-            "cost": clue.search_cost,
-            "red_herring": clue.red_herring,
-        })
-
     # 搜证地点：宣传页与对局台共用，只暴露名字与容量
     scenes = [
         {
             "id": location.location_id,
             "name": location.display_name,
-            "capacity": getattr(location, "capacity", None),
-            "clue_count": sum(1 for clue in script.clues.values() if clue.location_id == location.location_id),
+            "capacity": location.capacity_per_act,
+            "clue_count": sum(1 for clue in script.clues.values()
+                              if clue.location_id == location.location_id
+                              and act.act_id in clue.act_available),
         }
         for location in locations.values()
+        if act.act_id in location.act_availability
     ]
 
     return {
         "script_id": script.script_id,
         "title": script.title,
         "subtitle": f"{script.tone}的一夜，{act.title}",
-        "tagline": "五个人的证词互相咬合，只有一个人的时间线永远对不上。",
+        "tagline": act.public_narrative,
         "genre": script.genre,
         "tone": script.tone,
         "difficulty": script.difficulty,
@@ -130,9 +93,7 @@ def build_show(script: Script) -> dict:
         "act_narrative": act.public_narrative,
         "dossier_no": f"{script.script_id.upper()}-{act.act_id}",
         "characters": characters,
-        "clues": clues,
         "locations": scenes,
-        "timeline": timeline,
         "sessions": [{"id": key, "label": label} for key, label in SESSIONS.items()],
     }
 
@@ -146,11 +107,70 @@ def create_show_app(fixture_path: str | None = None, dsn: str | None = None):
     # 复用既有对局应用（路由、异常格式、lifespan 全部继承）
     app = create_game_api(db_path=database, fixture_path=str(fixture_file))
     store = EventStore(database)
-    show = build_show(script)
+    scripts = ScriptStore(store)
+
+    admin_prefixes = ("/api/scripts", "/api/v2/scripts", "/api/v2/compile-jobs",
+                      "/api/v2/eval-runs", "/api/evals")
+
+    @app.middleware("http")
+    async def protect_author_api(request: Request, call_next):
+        path = request.url.path
+        if any(path == prefix or path.startswith(prefix + "/") for prefix in admin_prefixes):
+            token = os.getenv("API_TOKEN") or os.getenv("AUTHOR_TOKEN")
+            if not token:
+                return JSONResponse({"detail": "author access is not configured"}, status_code=503)
+            if request.headers.get("authorization") != f"Bearer {token}":
+                return JSONResponse({"detail": "unauthorized"}, status_code=401)
+        return await call_next(request)
+
+    def selected_script(script_id: str | None) -> Script:
+        if not script_id or script_id == script.script_id:
+            return script
+        try:
+            return scripts.load_published(script_id)
+        except (KeyError, ValueError) as exc:
+            raise HTTPException(404, "剧本未发布") from exc
+
+    def game_script(game_id: str) -> Script:
+        try:
+            script_id = store.game_script_id(game_id)
+            return script if script_id == script.script_id else scripts.load_playable(script_id)
+        except (KeyError, ValueError) as exc:
+            raise HTTPException(404, "对局不存在") from exc
+
+    @app.get("/api/show/scripts")
+    def list_show_scripts() -> list[dict]:
+        published = scripts.list_scripts(status="published")
+        return [{"script_id": script.script_id, "title": script.title},
+                *({"script_id": row["script_id"], "title": row["title"]}
+                  for row in published if row["script_id"] != script.script_id)]
 
     @app.get("/api/show/script")
-    def get_show() -> dict:
-        return show
+    def get_show(script_id: str | None = None) -> dict:
+        return build_show(selected_script(script_id))
+
+    @app.get("/api/show/games/{game_id}/act")
+    def get_game_act(game_id: str, seat_id: str = "seat_1") -> dict:
+        game = game_script(game_id)
+        try:
+            state = store.load_for_seat(game_id, seat_id, game.acts[0].search_points_budget)
+        except (KeyError, PermissionError) as exc:
+            raise HTTPException(404, "对局或座位不存在") from exc
+        act = next(item for item in game.acts if item.act_id == state.act_id)
+        return {
+            "act_id": act.act_id, "title": act.title,
+            "narrative": act.public_narrative,
+            "requires_vote": act.requires_vote,
+            "is_final": act.act_id == max(game.acts, key=lambda item: item.order).act_id,
+            "locations": [
+                {"id": location.location_id, "name": location.display_name,
+                 "capacity": location.capacity_per_act,
+                 "clue_count": sum(1 for clue in game.clues.values()
+                                   if clue.location_id == location.location_id
+                                   and act.act_id in clue.act_available)}
+                for location in game.locations.values()
+                if act.act_id in location.act_availability],
+        }
 
     @app.get("/api/show/search-options")
     def search_options(game_id: str, location_id: str, seat_id: str = "seat_1") -> dict:
@@ -159,52 +179,26 @@ def create_show_app(fixture_path: str | None = None, dsn: str | None = None):
         规则（前置线索、地点容量、剩余点数）全部由引擎计算，本接口不重复实现。
         """
         try:
-            script_id = store.game_script_id(game_id)
-            state = store.load_for_seat(game_id, seat_id, script.acts[0].search_points_budget)
-        except KeyError as exc:
+            game = game_script(game_id)
+            state = store.load_for_seat(game_id, seat_id, game.acts[0].search_points_budget)
+        except (KeyError, PermissionError) as exc:
             raise HTTPException(404, "对局或座位不存在") from exc
-        game_script = script if script_id == script.script_id else ScriptStore(store).load_playable(script_id)
-        location = game_script.locations.get(location_id)
-        candidates = available_clues(game_script, state, location_id, seat_id)
+        location = game.locations.get(location_id)
+        candidates = available_clues(game, state, location_id, seat_id)
         used = state.search_counts.get(location_id, 0)
         capacity = getattr(location, "capacity_per_act", 0) if location else 0
         return {
-            "mode": game_script.search_mode,
+            "mode": game.search_mode,
             "location": location.display_name if location else "",
             "remaining": max(0, capacity - used),
             "options": [
                 {
                     "clue_id": clue.clue_id,
                     "label": clue.search_label or clue.display_name,
-                    "cost": clue.search_cost,
+                    "cost": 1 if game.search_mode == "location_bundle" else clue.search_cost,
                 }
                 for clue in candidates
             ],
-        }
-
-    @app.post("/api/show/accuse")
-    def accuse(payload: AccuseRequest) -> dict:
-        suspect = script.characters.get(payload.suspect_id)
-        if suspect is None:
-            raise HTTPException(404, "嫌疑人不在名单内")
-        culprit = next((role for role in script.characters.values() if role.is_culprit), None)
-        if culprit is None:
-            raise HTTPException(409, "该剧本未标注凶手")
-        if suspect.role_id == culprit.role_id:
-            evidence = "、".join(
-                clue.display_name for clue in script.clues.values()
-                if any(event.event_id in clue.reveals_event_ids for event in script.truth_events
-                       if any(actor == culprit.role_id for actor in event.actor_ids))
-            ) or "现场遗留物"
-            return {
-                "correct": True,
-                "message": f"证据链闭合：{suspect.display_name} 就是这起案子的凶手。",
-                "truth": f"关键物证：{evidence}",
-            }
-        return {
-            "correct": False,
-            "message": f"{suspect.display_name} 的时间线能自洽，至少这一刀不是他/她下的。",
-            "truth": "",
         }
 
     @app.post("/api/show/signup")

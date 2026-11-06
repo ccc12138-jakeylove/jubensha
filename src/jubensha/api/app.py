@@ -426,7 +426,9 @@ def create_app(db_path: str | None = None, fixture_path: str | None = None) -> F
                         yield f"event: error\ndata: {json.dumps({'code': 'INTERRUPTED', 'message': 'turn was interrupted'})}\n\n"
                         return
                     if status in ("completed", "failed"):
-                        return
+                        # The terminal event and status commit together, but the earlier
+                        # after() read may have raced that commit. Drain it next loop.
+                        continue
                     time.sleep(0.1)
             return StreamingResponse(stream_persisted(), media_type="text/event-stream")
         if stream:

@@ -22,17 +22,18 @@ async function request(path, options = {}) {
   return payload
 }
 
-/** 拉取剧本展示数据：标题、角色、线索、时间线 */
-export function fetchShow() {
-  return request('/api/show/script')
+/** Only pre-game public script information is returned. */
+export function fetchShow(scriptId) {
+  const query = scriptId ? `?${new URLSearchParams({ script_id: scriptId })}` : ''
+  return request(`/api/show/script${query}`)
 }
 
-/** 提交指认，返回 {correct, message, truth} */
-export function submitAccuse(suspectId) {
-  return request('/api/show/accuse', {
-    method: 'POST',
-    body: JSON.stringify({ suspect_id: suspectId }),
-  })
+export function fetchPublishedScripts() {
+  return request('/api/show/scripts')
+}
+
+export function fetchActView(gameId, seatId = 'seat_1') {
+  return request(`/api/show/games/${gameId}/act?${new URLSearchParams({ seat_id: seatId })}`)
 }
 
 /** 提交报名，返回 {ok, session, name} */

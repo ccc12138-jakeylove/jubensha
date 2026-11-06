@@ -61,3 +61,31 @@ def test_grounded_source_is_written_to_speech_and_claim(script, tmp_path, monkey
         own = next(event for event in events if event.type == kind
                    and event.payload.get("role_id") == "lin_suyun")
         assert own.payload["evidence_ids"] == ["C02"]
+
+
+def test_public_accusation_does_not_repeat_one_fallback_for_every_role(script, tmp_path, monkeypatch):
+    monkeypatch.setattr("jubensha.agents.npc.configured", lambda: True)
+    monkeypatch.setattr("jubensha.engine.guard.configured", lambda: False)
+    monkeypatch.setattr("jubensha.agents.npc.generate", lambda *args, **kwargs:
+                        '{"source_id":"none"}')
+    store = EventStore(tmp_path / "public_question.db")
+    store.create_game("g", script.script_id, script.acts[0].act_id)
+    graph = build_turn_graph(script, store)
+    for action in ("begin", "read_done"):
+        run_turn(graph, store, script, {"game_id": "g", "action": action})
+    run_turn(graph, store, script, {"game_id": "g", "action": "talk",
+                                        "text": "我觉得凶手在你们之中"})
+    speeches = [event for event in store.events("g") if event.type == EventType.NPC_SPEECH]
+    assert len(speeches) >= 2
+    assert len({event.payload["text"] for event in speeches}) == len(speeches)
+
+
+def test_profile_selection_on_accusation_uses_role_observation(script, state, tmp_path, monkeypatch):
+    monkeypatch.setattr("jubensha.agents.npc.configured", lambda: True)
+    monkeypatch.setattr("jubensha.agents.npc.generate", lambda *args, **kwargs:
+                        '{"source_id":"profile"}')
+    store = EventStore(tmp_path / "accusation.db")
+    response = respond(build_perception(script, state, "lin_suyun"),
+                       "我觉得凶手在你们之中", [], store, "g")
+    assert "302 有争吵声" in response.text
+    assert response.evidence_ids == ["E01"]

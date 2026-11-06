@@ -16,7 +16,7 @@ uv sync
 cp .env.example .env
 ```
 
-在 `.env` 中设置 `PG_DSN`（PostgreSQL 连接串，如 `postgresql://user:pw@127.0.0.1:5432/jubensha`），以及 `LLM_MODEL`、`LLM_API_KEY`、`LLM_BASE_URL`（DeepSeek 示例：`LLM_MODEL=deepseek/deepseek-flash`，key 到 platform.deepseek.com 申请）。`.env` 由 `src/jubensha/__init__.py` 在包导入时自动加载，已在 shell 或 IDE 中设置的同名环境变量优先，无需手动 export。也可不配置模型，此时 NPC 使用固定的角色内回避回答。
+在 `.env` 中按 `KEY=VALUE` 格式设置 `PG_DSN`、`LLM_MODEL`、`LLM_API_KEY`、`LLM_BASE_URL`，不要只放一行裸密钥。百炼示例为 `LLM_MODEL=openai/qwen3.7-plus` 与 `LLM_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1`；API Key 所属地区需与地址匹配。`.env` 由 `src/jubensha/__init__.py` 在包导入时加载，已在 shell 或 IDE 中设置的同名环境变量优先。未配置模型时 NPC 使用按角色公开身份区分的安全回避回答。
 
 ## 运行
 
@@ -29,14 +29,17 @@ uv run streamlit run src/jubensha/ui/app.py
 `frontend/` 是 React + Vite 站点，`http://127.0.0.1:8100` 一个地址同时提供介绍页与可玩的对局台，后端直接复用 `jubensha.api.app` 的对局路由，不重写任何回合规则。
 
 ```bash
-cd frontend && npm install && npm run build      # 产物输出到 frontend/dist
-uv run uvicorn jubensha.web.app:app --host 0.0.0.0 --port 8100
+cd frontend
+npm ci && npm run build
+cd ..
+uv run uvicorn jubensha.web.app:app --host 127.0.0.1 --port 8100
 ```
 
 - 入口：首屏「现在开局」或导航「进入对局」，地址变为 `/#play`，刷新后仍停在原页面
-- 对局台支持：开局 → 读本 → 公聊提问 → 搜证（按地点选线索，前置与点数由引擎判定）→ 私聊 → 对质 → 投票指认 → 复盘，阶段流转全部由后端 FSM 裁定
-- 介绍页提供三套风格（暗夜 / 旧档 / 冷雾）、合成雨夜 BGM、角色翻转卡、线索墙、时间线、预约表单；头像、纸纹、红绳、图钉、印章均为 CSS 渐变，不引用外部图片
-- 额外展示接口：`GET /api/show/script`、`GET /api/show/search-options`、`POST /api/show/accuse`、`POST /api/show/signup`；预约写入 `show_signups` 表，与对局数据隔离
+- 对局台可选择已发布剧本，支持开局、读本、公聊、搜证、私聊、对质、按幕投票及复盘；阶段流转由后端 FSM 裁定
+- 介绍页提供主题切换、角色公开简介和预约表单；未获得的线索、真相时间线和无对局指认接口不会公开
+- 公开展示接口：`GET /api/show/scripts`、`GET /api/show/script`、`GET /api/show/games/{game_id}/act`、`GET /api/show/search-options`、`POST /api/show/signup`
+- 对外站点的作者接口需要 `AUTHOR_TOKEN`（Bearer），未配置时返回 503。公开玩家 API 目前仍是单席位模型，应保持 `127.0.0.1` 绑定；不要把此版本直接暴露到互联网。独立作者 API 的 `API_TOKEN` 会同时保护玩家路由，不适合直接嵌入浏览器
 - 开发：`cd frontend && npm run dev`（5173，`/api` 代理到 8100）
 
 V2 预览可单独设置 `PG_SCHEMA=jubensha_v2`（或指向另一个库），避免与固定 V1 服务共用数据。V2 API 使用 `uv run uvicorn jubensha.api.app:app --host 127.0.0.1 --port 8001`；`/api/v2/compile-jobs` 与 `/api/v2/eval-runs` 提交后台任务，轮询对应 ID。`AUTHOR_TOKEN` 控制角色认知回放视角。`LLM_MODEL_COMPILER`、`LLM_MODEL_NPC`、`LLM_MODEL_JUDGE`、`LLM_MODEL_GUARD` 可分别路由模型；`LLM_MODEL_STRONG` 只用于编译末次修复。三本完整授权 IR 准备好后，运行 `uv run python scripts/eval_gate.py fixture1.json fixture2.json fixture3.json` 做模型回归；该命令不能替代人工标注验收。
@@ -48,7 +51,7 @@ V2 预览可单独设置 `PG_SCHEMA=jubensha_v2`（或指向另一个库），�
 P2 中，NPC 只接收角色认知视图；声明随事件追加。输出先做确定性泄密检查；配置 `LLM_MODEL` 时再经 LiteLLM 做语义判定。未配置模型的测试只能验证结构隔离与静态拦截，不能代表真实模型的泄密率。
 V1 默认 `NPC_GENERATION_MODE=grounded`：模型选择授权证据 ID，代码呈现事实；`freeform` 仅用于对照实验，需接受更高的幻觉与拦截风险。
 
-P3 可在复盘页按事件序号回放，并切换玩家或 NPC 视角。历史对话摘要按视角写入 SQLite；当前默认 `CONTEXT_MODE=full`，`layered` 是超长局兜底，`auto` 可按字符近似预算自动切换。用 `uv run python scripts/compare_contexts.py` 比较同一局的两种上下文；配置模型后加 `--generate` 查看实际 token 与耗时。
+P3 可在复盘页按事件序号回放，并切换玩家或 NPC 视角。历史对话摘要按视角写入 PostgreSQL；当前默认 `CONTEXT_MODE=full`，`layered` 是超长局兜底，`auto` 可按字符近似预算自动切换。用 `uv run python scripts/compare_contexts.py` 比较同一局的两种上下文；配置模型后加 `--generate` 查看实际 token 与耗时。
 
 P4 可在侧栏进入剧本库，上传 `.txt/.md/.docx/.pdf` 或完整 IR JSON。自然语言文件需要先配置模型；抽取失败和低置信度字段进入校对页。编辑 IR、解决校对项且质检无 blocker 后，才能发布并开局。
 

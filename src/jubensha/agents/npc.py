@@ -11,7 +11,7 @@ from jubensha.schema.claims import NpcResponse
 from jubensha.storage.events import EventStore
 from jubensha.storage.memory import SummaryStore
 from jubensha.engine.memory import summaries_for_context
-from jubensha.agents.fallback import safe_response_with_source
+from jubensha.agents.fallback import is_accusation_question, safe_response_with_source
 
 
 def _related(question: str, fact: str) -> bool:
@@ -53,8 +53,12 @@ def _grounded_line(perception: PerceptionView, source_id: str, question: str) ->
                                if belief["source_event_id"] in
                                {item["event_id"] for item in perception.known_events} else [])
     if source_id == "profile":
+        if is_accusation_question(question):
+            return _fallback_response(perception, question)
         return NpcResponse(text=perception.public_profile)
     if source_id == "public":
+        if is_accusation_question(question):
+            return _fallback_response(perception, question)
         return NpcResponse(text=perception.public_summary["narrative"])
     return _fallback_response(perception, question)
 

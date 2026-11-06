@@ -12,8 +12,9 @@ import re
 import sqlite3
 
 import psycopg
+from psycopg import sql
+from psycopg.conninfo import conninfo_to_dict, make_conninfo
 
-DEFAULT_DSN = "postgresql://rag:rag_dev_2026@127.0.0.1:5432/jubensha"
 SKIP_TABLES = {"sqlite_sequence"}
 APPEND_ONLY_TABLES = ("game_events",)
 
@@ -28,23 +29,27 @@ def convert_ddl(ddl: str) -> str:
 
 
 def ensure_database(dsn: str) -> None:
-    target = dsn.rsplit("/", 1)[-1].split("?")[0]
-    admin_dsn = dsn.rsplit("/", 1)[0] + "/postgres"
+    target = conninfo_to_dict(dsn).get("dbname")
+    if not target:
+        raise ValueError("PostgreSQL connection string must name a database")
+    admin_dsn = make_conninfo(dsn, dbname="postgres")
     with psycopg.connect(admin_dsn, autocommit=True) as conn:
         exists = conn.execute("SELECT 1 FROM pg_database WHERE datname=%s", (target,)).fetchone()
         if exists:
             print(f"库 {target} 已存在")
             return
-        conn.execute(f'CREATE DATABASE "{target}"')
+        conn.execute(sql.SQL("CREATE DATABASE {}").format(sql.Identifier(target)))
         print(f"已创建库 {target}")
 
 
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--sqlite", default=os.getenv("SQLITE_PATH", "game.db"))
-    parser.add_argument("--dsn", default=os.getenv("PG_DSN", DEFAULT_DSN))
+    parser.add_argument("--dsn", default=os.getenv("PG_DSN"))
     parser.add_argument("--recreate", action="store_true", help="先 DROP 目标库里的同名表")
     args = parser.parse_args()
+    if not args.dsn:
+        parser.error("--dsn or PG_DSN is required")
 
     ensure_database(args.dsn)
     src = sqlite3.connect(args.sqlite)

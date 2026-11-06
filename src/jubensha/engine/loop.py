@@ -227,7 +227,7 @@ def build_turn_graph(script: Script, store: EventStore, observer=None):
                     output["reply"], output["evidence_ids"] = safe_response_with_source(
                         perception, output["question"])
                     if not check_npc_output(script, perception, output["reply"], output["question"]):
-                        output["reply"] = "这件事我没亲眼看见，不敢乱说。"
+                        output["reply"] = f"{perception.display_name}：这件事我不能确认。"
                         output["evidence_ids"] = []
                     output["is_lie"] = False
             data["reply"] = "\n".join(item["reply"] for item in data["npc_outputs"])

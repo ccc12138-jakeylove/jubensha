@@ -1,12 +1,9 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { fetchShow } from './api.js'
 import Nav from './components/Nav.jsx'
 import Hero from './components/Hero.jsx'
 import Dossier from './components/Dossier.jsx'
 import Characters from './components/Characters.jsx'
-import Clues from './components/Clues.jsx'
-import Timeline from './components/Timeline.jsx'
-import Accuse from './components/Accuse.jsx'
 import Signup from './components/Signup.jsx'
 import Footer from './components/Footer.jsx'
 import Toast from './components/Toast.jsx'
@@ -82,8 +79,6 @@ export default function App() {
     window.scrollTo({ top: 0 })
   }, [])
 
-  const suspects = useMemo(() => data?.characters ?? [], [data])
-
   // 对局台：独立布局，不显示宣传页导航
   if (view === 'play') {
     return (
@@ -122,9 +117,6 @@ export default function App() {
 
         <Dossier data={data} />
         <Characters data={data} />
-        <Clues data={data} onToast={showToast} />
-        <Timeline data={data} />
-        <Accuse suspects={suspects} onToast={showToast} />
         <Signup onToast={showToast} />
       </main>
 

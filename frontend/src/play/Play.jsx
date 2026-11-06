@@ -1,9 +1,20 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { createGame, fetchClues, fetchGame, fetchSearchOptions, postTurn } from '../api.js'
+import { createGame, fetchActView, fetchClues, fetchGame, fetchPublishedScripts,
+  fetchSearchOptions, fetchShow, postTurn } from '../api.js'
 import { avatarGradient, initialOf } from '../utils.js'
 
 const SEAT = 'seat_1'
 const STORAGE_KEY = 'jubensha-game-id'
+
+function savedLog(gameId) {
+  if (!gameId) return []
+  try {
+    const value = JSON.parse(localStorage.getItem(`${STORAGE_KEY}-log-${gameId}`) || '[]')
+    return Array.isArray(value) ? value : []
+  } catch {
+    return []
+  }
+}
 
 /** 阶段 → 中文标签 */
 const PHASE_LABEL = {
@@ -38,7 +49,11 @@ const PHASE_HINT = {
 export default function Play({ show, onExit }) {
   const [gameId, setGameId] = useState(() => localStorage.getItem(STORAGE_KEY) || '')
   const [state, setState] = useState(null)
-  const [log, setLog] = useState([])
+  const [log, setLog] = useState(() => savedLog(localStorage.getItem(STORAGE_KEY)))
+  const [activeShow, setActiveShow] = useState(show)
+  const [publishedScripts, setPublishedScripts] = useState([])
+  const [selectedScriptId, setSelectedScriptId] = useState(show?.script_id || '')
+  const [actView, setActView] = useState(null)
   const [clues, setClues] = useState([])
   const [busy, setBusy] = useState(false)
   const [draft, setDraft] = useState('')
@@ -54,11 +69,28 @@ export default function Play({ show, onExit }) {
   const [remaining, setRemaining] = useState(0)
   const logRef = useRef(null)
 
-  const characters = show?.characters ?? []
-  const locations = show?.locations ?? []
+  const characters = activeShow?.characters ?? []
+  const locations = actView?.locations ?? activeShow?.locations ?? []
+  const scriptOptions = publishedScripts.length ? publishedScripts
+    : activeShow ? [{ script_id: activeShow.script_id, title: activeShow.title }] : []
   const phase = state?.phase ?? 'entry'
   const seat = state?.seats?.[SEAT]
   const searchPoints = seat?.search_points ?? 0
+
+  useEffect(() => {
+    if (!gameId && show) {
+      setActiveShow(show)
+      setSelectedScriptId((current) => current || show.script_id)
+    }
+  }, [gameId, show])
+
+  useEffect(() => {
+    fetchPublishedScripts().then(setPublishedScripts).catch((err) => setError(err.message))
+  }, [])
+
+  useEffect(() => {
+    if (gameId) localStorage.setItem(`${STORAGE_KEY}-log-${gameId}`, JSON.stringify(log.slice(-200)))
+  }, [gameId, log])
 
   /** 统一写一条对话记录 */
   const pushLog = useCallback((who, text, tone = 'normal') => {
@@ -82,6 +114,12 @@ export default function Play({ show, onExit }) {
       .then((next) => {
         if (!alive) return
         setState(next)
+        Promise.all([fetchShow(next.script_id), fetchActView(gameId)]).then(([details, act]) => {
+          if (!alive) return
+          setActiveShow(details)
+          setActView(act)
+          setSelectedScriptId(next.script_id)
+        }).catch((err) => { if (alive) setError(err.message) })
         refreshClues(gameId)
         pushLog('system', `已恢复上一局（${PHASE_LABEL[next.phase] || next.phase}）`)
       })
@@ -107,13 +145,18 @@ export default function Play({ show, onExit }) {
     setBusy(true)
     setError('')
     try {
-      const created = await createGame(show?.script_id)
+      const created = await createGame(selectedScriptId || show?.script_id)
       localStorage.setItem(STORAGE_KEY, created.game_id)
       setGameId(created.game_id)
       setLog([])
       pushLog('system', '档案已开封，雨夜开始。')
       const next = await fetchGame(created.game_id)
       setState(next)
+      const [details, act] = await Promise.all([
+        fetchShow(next.script_id), fetchActView(created.game_id),
+      ])
+      setActiveShow(details)
+      setActView(act)
     } catch (err) {
       setError(err.message)
     } finally {
@@ -129,6 +172,9 @@ export default function Play({ show, onExit }) {
     try {
       const result = await postTurn(gameId, { seat_id: SEAT, action, ...extra })
       setState(result.state)
+      if (result.state.act_id !== state?.act_id || !actView) {
+        setActView(await fetchActView(gameId))
+      }
       if (result.reply) {
         pushLog(extra.role_id ? 'npc' : 'system', result.reply)
       } else if (!quiet) {
@@ -148,13 +194,15 @@ export default function Play({ show, onExit }) {
   const talk = async () => {
     const text = draft.trim()
     if (!text) return
-    if (!target) {
-      setError('先在右侧选一个对话对象')
+    const roleId = phase === 'private' ? state?.private_role_id : target
+    if (!roleId) {
+      setError('先选一个对话对象')
       return
     }
     pushLog('player', text)
     setDraft('')
-    await act(phase === 'confront' ? 'confront_talk' : 'talk', { role_id: target, text })
+    const action = phase === 'private' ? 'private_talk' : phase === 'confront' ? 'confront_talk' : 'talk'
+    await act(action, { role_id: roleId, text })
   }
 
   /** 打开一个地点，拉取该地点当前可搜的线索（规则由引擎判定） */
@@ -219,14 +267,32 @@ export default function Play({ show, onExit }) {
       <div className="play play--idle">
         <div className="play__card">
           <p className="section-kicker">New Case</p>
-          <h1 className="play__title">{show?.title || '雾港谜案'}</h1>
+          <h1 className="play__title">{activeShow?.title || '剧本杀'}</h1>
+          <label className="play__script-select">
+            剧本
+            <select value={selectedScriptId} disabled={busy} onChange={async (event) => {
+              const scriptId = event.target.value
+              setSelectedScriptId(scriptId)
+              setError('')
+              try {
+                setActiveShow(await fetchShow(scriptId))
+              } catch (err) {
+                setError(err.message)
+              }
+            }}>
+              {scriptOptions.map((item) => (
+                <option key={item.script_id} value={item.script_id}>{item.title}</option>
+              ))}
+            </select>
+          </label>
           <p className="play__desc">
             {PHASE_HINT.entry}
             <br />
             单机单人视角：你以旁观者身份盘问所有角色，规则与证据链由后端裁定。
           </p>
           <div className="play__idle-actions">
-            <button type="button" className="btn btn--primary" onClick={start} disabled={busy}>
+            <button type="button" className="btn btn--primary" onClick={start}
+              disabled={busy || !selectedScriptId}>
               {busy ? '正在铺桌…' : '开局'}
             </button>
             <button type="button" className="btn" onClick={onExit}>
@@ -247,7 +313,7 @@ export default function Play({ show, onExit }) {
         <button type="button" className="btn btn--ghost" onClick={onExit}>
           ← 介绍页
         </button>
-        <span className="play__act">{show?.act_title || '第一幕'}</span>
+        <span className="play__act">{actView?.title || activeShow?.act_title || '第一幕'}</span>
         <span className={`play__phase play__phase--${phase}`}>{PHASE_LABEL[phase] || phase}</span>
         <span className="play__stat">回合 {state?.turn ?? 0}</span>
         <span className="play__stat">搜索点 {searchPoints}</span>
@@ -287,8 +353,8 @@ export default function Play({ show, onExit }) {
           {/* 读本 */}
           {phase === 'read' && (
             <div className="play__read">
-              <h2>{show?.act_title}</h2>
-              <p>{show?.act_narrative}</p>
+              <h2>{actView?.title || activeShow?.act_title}</h2>
+              <p>{actView?.narrative || activeShow?.act_narrative}</p>
               <button type="button" className="btn btn--primary" onClick={() => act('read_done')} disabled={busy}>
                 读完了，进入公聊
               </button>
@@ -414,8 +480,9 @@ export default function Play({ show, onExit }) {
           {phase === 'vote' && (
             <div className="play__vote">
               <p className="play__note">已投给 {nameOf(state?.vote_role_id)}，动机：{state?.vote_motive || '—'}</p>
-              <button type="button" className="btn btn--primary" onClick={() => act('recap')} disabled={busy}>
-                查看复盘
+              <button type="button" className="btn btn--primary"
+                onClick={() => act(actView?.is_final ? 'recap' : 'next_act')} disabled={busy || !actView}>
+                {actView?.is_final ? '查看复盘' : '进入下一幕'}
               </button>
             </div>
           )}
@@ -460,9 +527,6 @@ export default function Play({ show, onExit }) {
                 <button type="button" className="btn" onClick={() => act('enter_confront')} disabled={busy}>
                   进入对质
                 </button>
-                <button type="button" className="btn btn--ghost" onClick={() => act('next_act')} disabled={busy}>
-                  下一幕
-                </button>
               </>
             )}
             {phase === 'search' && (
@@ -480,14 +544,19 @@ export default function Play({ show, onExit }) {
                 <button type="button" className="btn" onClick={() => act('leave_confront')} disabled={busy}>
                   回到公聊
                 </button>
-                <button type="button" className="btn btn--ghost" onClick={() => act('next_act')} disabled={busy}>
-                  下一幕
-                </button>
+                {actView && !actView.requires_vote && !actView.is_final && (
+                  <button type="button" className="btn btn--ghost"
+                    onClick={() => act('next_act')} disabled={busy}>
+                    下一幕
+                  </button>
+                )}
               </>
             )}
             {phase === 'vote' && (
-              <button type="button" className="btn" onClick={() => act('recap')} disabled={busy}>
-                查看复盘
+              <button type="button" className="btn"
+                onClick={() => act(actView?.is_final ? 'recap' : 'next_act')}
+                disabled={busy || !actView}>
+                {actView?.is_final ? '查看复盘' : '进入下一幕'}
               </button>
             )}
           </div>
